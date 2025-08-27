@@ -1,20 +1,107 @@
+import React from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { createStackNavigator } from '@react-navigation/stack';
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import { ConsentScreen } from './src/screens/ConsentScreen';
+import { DemoScreen } from './src/screens/DemoScreen';
+import { DiscoverScreen } from './src/screens/discoverscreen';
+import { MatchesScreen } from './src/screens/matchescreen';
+import { ChatScreen } from './src/screens/chatscreen';
+
+const Tab = createBottomTabNavigator();
+const Stack = createStackNavigator();
+
+import { Text } from 'react-native';
+
+const MainTabs = () => {
+  return (
+    <Tab.Navigator
+      screenOptions={{
+        tabBarStyle: {
+          backgroundColor: '#000',
+          borderTopColor: 'rgba(255, 20, 147, 0.2)',
+          borderTopWidth: 1,
+          height: 80, // Increased height
+          paddingBottom: 18, // More padding for bigger touch area
+          paddingTop: 10,
+        },
+        tabBarActiveTintColor: '#FF1493',
+        tabBarInactiveTintColor: '#666',
+        headerShown: false,
+        tabBarLabelStyle: {
+          fontSize: 16, // Larger label
+          marginBottom: 4,
+        },
+      }}
+    >
+      <Tab.Screen
+        name="Discover"
+        component={DiscoverScreen}
+        options={{
+          tabBarLabel: 'Discover',
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 34, color }}>{'💖'}</Text>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Matches"
+        component={MatchesScreen}
+        options={{
+          tabBarLabel: 'Matches',
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 34, color }}>{'✨'}</Text>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Demo"
+        component={DemoScreen}
+        options={{
+          tabBarLabel: 'Demo',
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 34, color }}>{'🔬'}</Text>
+          ),
+        }}
+      />
+    </Tab.Navigator>
+  );
+};
 
 export default function App() {
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <NavigationContainer>
+      <StatusBar style="light" backgroundColor="#000" />
+      <Stack.Navigator
+        screenOptions={{
+          headerShown: false,
+          cardStyle: { backgroundColor: '#000' },
+        }}
+      >
+        <Stack.Screen
+          name="Consent"
+          children={({ navigation }) => (
+            <ConsentScreen
+              onConsentGiven={() => navigation.replace('Main')}
+              onConsentDeclined={() => {
+                // Handle declined consent, e.g., exit app or show message
+              }}
+            />
+          )}
+        />
+        <Stack.Screen name="Main" component={MainTabs} />
+        <Stack.Screen 
+          name="Chat" 
+          component={ChatScreen}
+          options={{
+            headerShown: true,
+            headerStyle: { backgroundColor: '#000' },
+            headerTintColor: '#FF1493',
+            headerTitle: '',
+          }}
+        />
+      </Stack.Navigator>
+    </NavigationContainer>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
