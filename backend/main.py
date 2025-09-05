@@ -56,7 +56,7 @@ mock_users = [
 
 from feature_extractor import FeatureExtractor, compute_and_store_features
 from ml_model import score_features
-from models import DBSession, DBEvent, DBFeatures, SessionLocal, Base, engine
+from models import DBSession, DBEvent, DBFeatures, DBUser, DBLike, DBNotification, SessionLocal, Base, engine
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -172,28 +172,89 @@ async def discover_users(payload: dict = Body(...)):
 
 @app.post("/api/v1/like")
 async def like_user(payload: dict = Body(...)):
-    """Handle user like action (mock implementation)."""
-    user_id = payload.get("userId")
-    if not user_id:
+    """Handle user like action with notifications."""
+    liked_user_id = payload.get("userId")
+    if not liked_user_id:
         raise HTTPException(status_code=400, detail="userId is required")
     
-    # Mock implementation - in real app, this would check for mutual likes
-    import random
-    is_match = random.choice([True, False])
+    # For demo purposes, use a current user ID (in real app, get from auth)
+    current_user_id = "current_user_hash"
     
-    if is_match:
-        # Return mock match data
-        return {
-            "isMatch": True,
-            "match": {
-                "id": f"match_{user_id}",
-                "userId": user_id,
-                "matchedAt": datetime.now(timezone.utc).isoformat(),
-                "user": next((user.dict() for user in mock_users if user.id == user_id), None)
+    # Create explicit session 
+    session = SessionLocal()
+    try:
+        # Check if this like already exists
+        existing_like = session.query(DBLike).filter(
+            DBLike.liker_user_hash == current_user_id,
+            DBLike.liked_user_hash == liked_user_id
+        ).first()
+        
+        if existing_like:
+            return {"isMatch": existing_like.is_match, "message": "Already liked"}
+        
+        # Check if the other user already liked this user (mutual like)
+        reverse_like = session.query(DBLike).filter(
+            DBLike.liker_user_hash == liked_user_id,
+            DBLike.liked_user_hash == current_user_id
+        ).first()
+        
+        is_match = reverse_like is not None
+        
+        # Create the like record
+        new_like = DBLike(
+            liker_user_hash=current_user_id,
+            liked_user_hash=liked_user_id,
+            created_at=datetime.now(timezone.utc),
+            is_match=is_match
+        )
+        session.add(new_like)
+        
+        # If it's a match, update the reverse like as well
+        if is_match and reverse_like:
+            reverse_like.is_match = True
+            session.add(reverse_like)
+        
+        # Create notification for the liked user
+        notification_message = "Someone is interested in you! 💖" if not is_match else "It's a match! 🔥💕"
+        notification_type = "like" if not is_match else "match"
+        
+        notification = DBNotification(
+            user_hash=liked_user_id,
+            type=notification_type,
+            from_user_hash=current_user_id,
+            message=notification_message,
+            created_at=datetime.now(timezone.utc),
+            is_read=False,
+            extra_data={"like_id": str(new_like.id)} if hasattr(new_like, 'id') else None
+        )
+        session.add(notification)
+        
+        # Commit all changes
+        session.commit()
+        
+        if is_match:
+            # Return match data
+            return {
+                "isMatch": True,
+                "match": {
+                    "id": f"match_{liked_user_id}",
+                    "userId": liked_user_id,
+                    "matchedAt": datetime.now(timezone.utc).isoformat(),
+                    "user": next((user.dict() for user in mock_users if user.id == liked_user_id), None)
+                }
             }
-        }
-    else:
-        return {"isMatch": False}
+        else:
+            return {
+                "isMatch": False,
+                "message": "Like sent! They'll be notified of your interest 💖"
+            }
+            
+    except Exception as e:
+        session.rollback()
+        print(f"Error in like_user: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process like")
+    finally:
+        session.close()
 
 @app.post("/api/v1/pass")
 async def pass_user(payload: dict = Body(...)):
@@ -204,6 +265,62 @@ async def pass_user(payload: dict = Body(...)):
     
     # Mock implementation - just return success
     return {"success": True, "message": f"Passed user {user_id}"}
+
+@app.get("/api/v1/notifications")
+async def get_notifications(user_id: Optional[str] = None):
+    """Get notifications for a user."""
+    # For demo purposes, use a default user ID if none provided
+    target_user_id = user_id or "current_user_hash"
+    
+    session = SessionLocal()
+    try:
+        notifications = session.query(DBNotification).filter(
+            DBNotification.user_hash == target_user_id
+        ).order_by(DBNotification.created_at.desc()).limit(50).all()
+        
+        notification_list = []
+        for notif in notifications:
+            notification_list.append({
+                "id": notif.id,
+                "type": notif.type,
+                "message": notif.message,
+                "from_user_hash": notif.from_user_hash,
+                "created_at": notif.created_at.isoformat(),
+                "is_read": notif.is_read,
+                "metadata": notif.extra_data
+            })
+        
+        return {"notifications": notification_list}
+        
+    except Exception as e:
+        print(f"Error getting notifications: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get notifications")
+    finally:
+        session.close()
+
+@app.post("/api/v1/notifications/{notification_id}/read")
+async def mark_notification_read(notification_id: int):
+    """Mark a notification as read."""
+    session = SessionLocal()
+    try:
+        notification = session.query(DBNotification).filter(
+            DBNotification.id == notification_id
+        ).first()
+        
+        if not notification:
+            raise HTTPException(status_code=404, detail="Notification not found")
+        
+        notification.is_read = True
+        session.commit()
+        
+        return {"success": True, "message": "Notification marked as read"}
+        
+    except Exception as e:
+        session.rollback()
+        print(f"Error marking notification as read: {e}")
+        raise HTTPException(status_code=500, detail="Failed to mark notification as read")
+    finally:
+        session.close()
 
 # Database dependency
 def get_db():

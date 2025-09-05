@@ -59,3 +59,22 @@ class DBUser(Base):
     created_at = Column(DateTime, nullable=False)
     is_active = Column(Boolean, default=True)
     is_guest = Column(Boolean, default=False)
+
+class DBLike(Base):
+    __tablename__ = "likes"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    liker_user_hash = Column(String, nullable=False)  # User who likes
+    liked_user_hash = Column(String, nullable=False)  # User being liked
+    created_at = Column(DateTime, nullable=False)
+    is_match = Column(Boolean, default=False)  # True if mutual like
+
+class DBNotification(Base):
+    __tablename__ = "notifications"
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_hash = Column(String, nullable=False)  # User receiving notification
+    type = Column(String, nullable=False)  # 'like', 'match', etc.
+    from_user_hash = Column(String, nullable=False)  # User who triggered notification
+    message = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False)
+    is_read = Column(Boolean, default=False)
+    extra_data = Column(JSON, nullable=True)  # Additional data
