@@ -10,6 +10,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def convert_numpy_types(obj):
+    """Convert numpy types to JSON-serializable Python types"""
+    if isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    else:
+        return obj
+
 class FeatureExtractor:
     """Extract behavioral features from telemetry events"""
     
@@ -20,9 +35,8 @@ class FeatureExtractor:
         """Extract features for a complete session"""
         db = SessionLocal()
         try:
-            session_uuid = uuid.UUID(session_id)
             events = db.query(DBEvent).filter(
-                DBEvent.session_id == session_uuid
+                DBEvent.session_id == session_id
             ).order_by(DBEvent.ts).all()
             
             if not events:
@@ -51,12 +65,11 @@ class FeatureExtractor:
         """Extract features for recent activity in a session"""
         db = SessionLocal()
         try:
-            session_uuid = uuid.UUID(session_id)
             cutoff_time = datetime.utcnow() - timedelta(minutes=window_minutes)
             
             events = db.query(DBEvent).filter(
                 and_(
-                    DBEvent.session_id == session_uuid,
+                    DBEvent.session_id == session_id,
                     DBEvent.ts >= cutoff_time
                 )
             ).order_by(DBEvent.ts).all()
@@ -329,23 +342,24 @@ def compute_and_store_features(session_id: str) -> bool:
         # Store features in database
         db = SessionLocal()
         try:
-            session_uuid = uuid.UUID(session_id)
+            # Convert numpy types to JSON-serializable types
+            json_features = convert_numpy_types(features)
             
             # Check if features already exist
             existing = db.query(DBFeatures).filter(
-                DBFeatures.session_id == session_uuid
+                DBFeatures.session_id == session_id
             ).first()
             
             if existing:
                 # Update existing features
-                existing.f = features
+                existing.f = json_features
                 existing.computed_at = datetime.utcnow()
             else:
                 # Create new features record
                 db_features = DBFeatures(
-                    session_id=session_uuid,
+                    session_id=session_id,
                     computed_at=datetime.utcnow(),
-                    f=features
+                    f=json_features
                 )
                 db.add(db_features)
             

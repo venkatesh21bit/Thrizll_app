@@ -1,21 +1,23 @@
 export interface UserProfile {
-  id: string;
-  username: string;
-  displayName: string;
+  user_hash: string;
+  name: string;
   age: number;
   bio: string;
-  avatar?: string;
-  location?: {
-    city: string;
-    distance?: number;
-  };
+  location: string;
   interests: string[];
   photos: string[];
-  isOnline: boolean;
-  lastSeen: Date;
+  created_at?: string;
+  
+  // Legacy fields for backward compatibility
+  id?: string;
+  username?: string;
+  displayName?: string;
+  avatar?: string;
+  isOnline?: boolean;
+  lastSeen?: Date;
   
   // Digital body language insights
-  communicationStyle: {
+  communicationStyle?: {
     responseSpeed: 'lightning' | 'quick' | 'thoughtful' | 'deliberate';
     typingPattern: 'burst' | 'steady' | 'careful' | 'passionate';
     attentionLevel: number; // 0-100

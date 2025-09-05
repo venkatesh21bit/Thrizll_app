@@ -7,17 +7,16 @@
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Text, Boolean
+from sqlalchemy.orm import Session
+from sqlalchemy.sql import text
 from pydantic import BaseModel
-
-app = FastAPI(title="Digital Body Language API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+from typing import List, Optional, Dict, Any
+from datetime import datetime, timezone
+import uuid
+import json
+import logging
+import hashlib
 
 # User discovery models and endpoint (must be after app definition)
 class UserProfile(BaseModel):
@@ -55,30 +54,24 @@ mock_users = [
     ),
 ]
 
-@app.post("/api/v1/discover")
-async def discover_users(payload: dict = Body(...)):
-    """Return a list of user profiles for discovery (mock data)."""
-    return {"users": [user.dict() for user in mock_users]}
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Text, Boolean
-from sqlalchemy.orm import Session
-from pydantic import BaseModel
-from typing import List, Optional, Dict, Any
-from datetime import datetime
-import uuid
-import json
-import logging
 from feature_extractor import FeatureExtractor, compute_and_store_features
 from ml_model import score_features
 from models import DBSession, DBEvent, DBFeatures, SessionLocal, Base, engine
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Database dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
-# Import DB models and SessionLocal from models.py
-from models import DBSession, DBEvent, DBFeatures, SessionLocal
+# Create tables
+Base.metadata.create_all(bind=engine)
 
 # Pydantic Models
 class TelemetryEvent(BaseModel):
@@ -115,6 +108,51 @@ class InterestScore(BaseModel):
     timestamp: datetime
     session_id: str
 
+# User Profile Models
+class ProfileCreate(BaseModel):
+    name: str
+    age: int
+    bio: str
+    location: str
+    interests: List[str]
+    photos: List[str]
+
+class UserProfileResponse(BaseModel):
+    user_hash: str
+    name: str
+    age: int
+    bio: str
+    location: str
+    interests: List[str]
+    photos: List[str]
+    created_at: datetime
+
+# Authentication Models
+class UserSignup(BaseModel):
+    email: str
+    password: str
+    name: str
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
+class AuthResponse(BaseModel):
+    success: bool
+    message: str
+    user_hash: Optional[str] = None
+    user: Optional[Dict[str, Any]] = None
+
+# Password hashing utilities
+def hash_password(password: str) -> str:
+    """Hash a password using SHA256 (simple for demo - use bcrypt in production)"""
+    salt = "thrillz_salt_2024"  # In production, use random salt per user
+    return hashlib.sha256((password + salt).encode()).hexdigest()
+
+def verify_password(password: str, password_hash: str) -> bool:
+    """Verify a password against its hash"""
+    return hash_password(password) == password_hash
+
 # FastAPI App
 app = FastAPI(title="Digital Body Language API", version="1.0.0")
 
@@ -125,6 +163,47 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# API Endpoints for user actions
+@app.post("/api/v1/discover")
+async def discover_users(payload: dict = Body(...)):
+    """Return a list of user profiles for discovery (mock data)."""
+    return {"users": [user.dict() for user in mock_users]}
+
+@app.post("/api/v1/like")
+async def like_user(payload: dict = Body(...)):
+    """Handle user like action (mock implementation)."""
+    user_id = payload.get("userId")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="userId is required")
+    
+    # Mock implementation - in real app, this would check for mutual likes
+    import random
+    is_match = random.choice([True, False])
+    
+    if is_match:
+        # Return mock match data
+        return {
+            "isMatch": True,
+            "match": {
+                "id": f"match_{user_id}",
+                "userId": user_id,
+                "matchedAt": datetime.now(timezone.utc).isoformat(),
+                "user": next((user.dict() for user in mock_users if user.id == user_id), None)
+            }
+        }
+    else:
+        return {"isMatch": False}
+
+@app.post("/api/v1/pass")
+async def pass_user(payload: dict = Body(...)):
+    """Handle user pass action (mock implementation)."""
+    user_id = payload.get("userId")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="userId is required")
+    
+    # Mock implementation - just return success
+    return {"success": True, "message": f"Passed user {user_id}"}
 
 # Database dependency
 def get_db():
@@ -169,9 +248,13 @@ manager = ConnectionManager()
 @app.post("/v1/sessions", response_model=SessionResponse)
 async def create_session(session_data: SessionCreate, db: Session = Depends(get_db)):
     """Create a new telemetry session"""
+    # Generate a unique session ID
+    session_id = f"session_{int(datetime.now().timestamp() * 1000)}_{session_data.user_hash[:10]}"
+    
     db_session = DBSession(
+        session_id=session_id,
         user_hash=session_data.user_hash,
-        started_at=datetime.utcnow(),
+        started_at=datetime.now(timezone.utc),
         device=session_data.device
     )
     db.add(db_session)
@@ -187,10 +270,13 @@ async def create_session(session_data: SessionCreate, db: Session = Depends(get_
 async def ingest_events(batch: EventBatch, db: Session = Depends(get_db)):
     """Ingest a batch of telemetry events"""
     try:
-        for event in batch.events:
+        logger.info(f"Received batch with {len(batch.events)} events")
+        for i, event in enumerate(batch.events):
+            logger.info(f"Processing event {i}: {event.etype} for session {event.session_id}")
             db_event = DBEvent(
                 ts=datetime.fromtimestamp(event.ts / 1000),
-                session_id=uuid.UUID(event.session_id),
+                session_id=event.session_id,
+                user_hash=event.user_hash,
                 screen=event.screen,
                 component_id=event.component_id,
                 etype=event.etype,
@@ -206,6 +292,7 @@ async def ingest_events(batch: EventBatch, db: Session = Depends(get_db)):
             db.add(db_event)
         
         db.commit()
+        logger.info("Successfully committed events to database")
         
         # Trigger feature extraction for each unique session
         unique_sessions = set(event.session_id for event in batch.events)
@@ -242,9 +329,8 @@ async def ingest_events(batch: EventBatch, db: Session = Depends(get_db)):
 async def get_score(session_id: str, db: Session = Depends(get_db)):
     """Get the latest interest score for a session"""
     try:
-        session_uuid = uuid.UUID(session_id)
         features_record = db.query(DBFeatures).filter(
-            DBFeatures.session_id == session_uuid
+            DBFeatures.session_id == session_id
         ).first()
         
         if features_record and features_record.score is not None:
@@ -265,7 +351,7 @@ async def get_score(session_id: str, db: Session = Depends(get_db)):
                     features_record.conf = confidence
                 else:
                     features_record = DBFeatures(
-                        session_id=session_uuid,
+                        session_id=session_id,
                         computed_at=datetime.utcnow(),
                         f=features,
                         score=score,
@@ -317,11 +403,9 @@ async def websocket_score(websocket: WebSocket, session_id: str):
 async def get_insights(session_id: str, db: Session = Depends(get_db)):
     """Get session insights and analytics"""
     try:
-        session_uuid = uuid.UUID(session_id)
-        
         # Get session info
         session = db.query(DBSession).filter(
-            DBSession.session_id == session_uuid
+            DBSession.session_id == session_id
         ).first()
         
         if not session:
@@ -329,7 +413,7 @@ async def get_insights(session_id: str, db: Session = Depends(get_db)):
         
         # Get event counts by type
         events = db.query(DBEvent).filter(
-            DBEvent.session_id == session_uuid
+            DBEvent.session_id == session_id
         ).all()
         
         event_counts = {}
@@ -349,6 +433,328 @@ async def get_insights(session_id: str, db: Session = Depends(get_db)):
     
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid session ID")
+
+# Authentication Endpoints
+@app.post("/api/v1/auth/signup", response_model=AuthResponse)
+async def signup(user_data: UserSignup):
+    """Register a new user account with explicit session management"""
+    # Create a new session explicitly (not using dependency injection)
+    db = SessionLocal()
+    
+    try:
+        # Create users table if it doesn't exist
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS users (
+                user_hash VARCHAR PRIMARY KEY,
+                email VARCHAR UNIQUE,
+                password_hash VARCHAR,
+                name VARCHAR NOT NULL,
+                age INTEGER,
+                bio TEXT,
+                location VARCHAR,
+                photos TEXT,
+                interests TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE,
+                is_guest BOOLEAN DEFAULT FALSE
+            )
+        '''))
+        
+        # Check if email already exists
+        existing_user = db.execute(text('''
+            SELECT user_hash FROM users WHERE email = :email
+        '''), {"email": user_data.email}).fetchone()
+        
+        if existing_user:
+            return AuthResponse(
+                success=False,
+                message="Email already exists. Please use a different email or try logging in."
+            )
+        
+        # Create new user
+        user_hash = hashlib.sha256(f"{user_data.email}_{user_data.name}_{datetime.utcnow()}".encode()).hexdigest()[:16]
+        password_hash = hash_password(user_data.password)
+        
+        print(f"🔍 Debug signup - user_hash: {user_hash}")
+        print(f"🔍 Debug signup - email: {user_data.email}")
+        print(f"🔍 Debug signup - password_hash: {password_hash}")
+        print(f"🔍 Debug signup - name: {user_data.name}")
+        
+        # Insert the new user with explicit is_active value
+        result = db.execute(text('''
+            INSERT INTO users 
+            (user_hash, email, password_hash, name, created_at, is_guest, is_active)
+            VALUES (:user_hash, :email, :password_hash, :name, :created_at, :is_guest, :is_active)
+        '''), {
+            "user_hash": user_hash,
+            "email": user_data.email,
+            "password_hash": password_hash,
+            "name": user_data.name,
+            "created_at": datetime.utcnow(),
+            "is_guest": False,
+            "is_active": True
+        })
+        
+        # Explicitly commit the transaction before verification
+        db.commit()
+        print(f"✅ Debug signup - User inserted and committed successfully")
+        
+        # Verify the user was actually saved with the correct data
+        verification = db.execute(text('''
+            SELECT user_hash, email, password_hash, name, is_active FROM users WHERE user_hash = :user_hash
+        '''), {"user_hash": user_hash}).fetchone()
+        print(f"🔍 Debug signup - Verification query result: {verification}")
+        
+        if not verification:
+            print("❌ Debug signup - User not found after insert, transaction failed!")
+            return AuthResponse(
+                success=False,
+                message="Failed to create account. Database transaction error."
+            )
+        
+        return AuthResponse(
+            success=True,
+            message="Account created successfully! Please complete your profile.",
+            user_hash=user_hash,
+            user={
+                "user_hash": user_hash,
+                "email": user_data.email,
+                "name": user_data.name,
+                "is_guest": False
+            }
+        )
+        
+    except Exception as e:
+        # Rollback on any error
+        db.rollback()
+        logging.error(f"Signup error: {e}")
+        print(f"❌ Debug signup - Exception occurred: {e}")
+        return AuthResponse(
+            success=False,
+            message="Failed to create account. Please try again."
+        )
+    finally:
+        # Always close the session
+        db.close()
+
+@app.post("/api/v1/auth/login", response_model=AuthResponse)
+async def login(user_data: UserLogin):
+    """Authenticate user login with explicit session management"""
+    # Create a new session explicitly
+    db = SessionLocal()
+    
+    try:
+        print(f"🔍 Debug login - email: {user_data.email}")
+        print(f"🔍 Debug login - password: {user_data.password}")
+        
+        # First check if user exists at all (without is_active condition)
+        user_check = db.execute(text('''
+            SELECT user_hash, email, password_hash, name, is_active FROM users WHERE email = :email
+        '''), {"email": user_data.email}).fetchone()
+        print(f"🔍 Debug login - user exists check: {user_check}")
+        
+        # Find active user by email
+        user = db.execute(text('''
+            SELECT user_hash, email, password_hash, name, age, bio, location, photos, interests, is_guest
+            FROM users WHERE email = :email AND is_active = TRUE
+        '''), {"email": user_data.email}).fetchone()
+        
+        print(f"🔍 Debug login - active user found: {user is not None}")
+        if user:
+            print(f"🔍 Debug login - stored password_hash: {user.password_hash}")
+            
+        if not user:
+            if user_check:
+                print("❌ Debug login - User exists but is not active")
+                return AuthResponse(
+                    success=False,
+                    message="Account is not active. Please contact support."
+                )
+            else:
+                print("❌ Debug login - User not found")
+                return AuthResponse(
+                    success=False,
+                    message="Invalid email or password."
+                )
+        
+        # Verify password
+        hashed_input_password = hash_password(user_data.password)
+        print(f"🔍 Debug login - hashed input password: {hashed_input_password}")
+        print(f"🔍 Debug login - passwords match: {hashed_input_password == user.password_hash}")
+        
+        if not verify_password(user_data.password, user.password_hash):
+            print("❌ Debug login - Password verification failed")
+            return AuthResponse(
+                success=False,
+                message="Invalid email or password."
+            )
+        
+        print("✅ Debug login - Password verification successful")
+        
+        # Convert photos and interests from JSON strings
+        photos = json.loads(user.photos) if user.photos else []
+        interests = json.loads(user.interests) if user.interests else []
+        
+        user_profile = {
+            "user_hash": user.user_hash,
+            "email": user.email,
+            "name": user.name,
+            "age": user.age,
+            "bio": user.bio,
+            "location": user.location,
+            "photos": photos,
+            "interests": interests,
+            "is_guest": user.is_guest
+        }
+        
+        print(f"✅ Debug login - Returning successful login for user: {user.user_hash}")
+        
+        return AuthResponse(
+            success=True,
+            message="Login successful!",
+            user_hash=user.user_hash,
+            user=user_profile
+        )
+        
+    except Exception as e:
+        logging.error(f"Login error: {e}")
+        print(f"❌ Debug login - Exception occurred: {e}")
+        return AuthResponse(
+            success=False,
+            message="Failed to login. Please try again."
+        )
+    finally:
+        # Always close the session
+        db.close()
+
+@app.post("/api/v1/profile", response_model=UserProfileResponse)
+async def create_profile(profile_data: ProfileCreate, db: Session = Depends(get_db)):
+    """Create a new user profile"""
+    try:
+        # Generate user hash
+        user_hash = hashlib.sha256(f"{profile_data.name}_{profile_data.age}_{datetime.utcnow()}".encode()).hexdigest()[:16]
+        
+        # Create users table if it doesn't exist (with updated schema)
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS users_new (
+                user_hash VARCHAR PRIMARY KEY,
+                email VARCHAR UNIQUE,
+                password_hash VARCHAR,
+                name VARCHAR NOT NULL,
+                age INTEGER,
+                bio TEXT,
+                location VARCHAR,
+                photos TEXT,
+                interests TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_active BOOLEAN DEFAULT TRUE,
+                is_guest BOOLEAN DEFAULT FALSE
+            )
+        '''))
+        
+        # Check if old table exists and migrate data
+        db.execute(text('''
+            INSERT OR IGNORE INTO users_new 
+            (user_hash, name, age, bio, location, photos, interests, created_at, is_active, is_guest)
+            SELECT user_hash, name, age, bio, location, photos, interests, 
+                   created_at, is_active, TRUE as is_guest
+            FROM users WHERE EXISTS (SELECT name FROM sqlite_master WHERE type='table' AND name='users')
+        '''))
+        
+        # Drop old table and rename new table
+        db.execute(text('DROP TABLE IF EXISTS users'))
+        db.execute(text('ALTER TABLE users_new RENAME TO users'))
+        
+        # Insert new user (guest user for profile-only creation)
+        db.execute(text('''
+            INSERT INTO users 
+            (user_hash, name, age, bio, location, photos, interests, is_guest)
+            VALUES (:user_hash, :name, :age, :bio, :location, :photos, :interests, :is_guest)
+        '''), {
+            "user_hash": user_hash,
+            "name": profile_data.name,
+            "age": profile_data.age,
+            "bio": profile_data.bio,
+            "location": profile_data.location,
+            "photos": json.dumps(profile_data.photos),
+            "interests": json.dumps(profile_data.interests),
+            "is_guest": True
+        })
+        
+        db.commit()
+        
+        # Log successful creation
+        logger.info(f"Successfully created profile for {profile_data.name} with hash {user_hash}")
+        
+        return UserProfileResponse(
+            user_hash=user_hash,
+            name=profile_data.name,
+            age=profile_data.age,
+            bio=profile_data.bio,
+            location=profile_data.location,
+            interests=profile_data.interests,
+            photos=profile_data.photos,
+            created_at=datetime.utcnow()
+        )
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error creating profile: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to create profile")
+
+@app.get("/api/v1/discover")
+async def get_discover_users(db: Session = Depends(get_db), limit: int = 10):
+    """Get users for the discover screen"""
+    try:
+        # Get users from database
+        result = db.execute(
+            text("SELECT user_hash, name, age, bio, location, photos, interests FROM users WHERE is_active = TRUE ORDER BY RANDOM() LIMIT :limit"),
+            {"limit": limit}
+        )
+        users = result.fetchall()
+        
+        discover_users = []
+        for user in users:
+            discover_users.append({
+                "user_hash": user[0],
+                "name": user[1],
+                "age": user[2],
+                "bio": user[3],
+                "location": user[4],
+                "photos": json.loads(user[5]) if user[5] else [],
+                "interests": json.loads(user[6]) if user[6] else []
+            })
+        
+        return {"users": discover_users, "count": len(discover_users)}
+        
+    except Exception as e:
+        logger.error(f"Error fetching discover users: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to fetch users")
+
+@app.get("/admin/users")
+async def list_all_users(db: Session = Depends(get_db)):
+    """List all users in the database (for debugging)"""
+    try:
+        result = db.execute(
+            text("SELECT user_hash, name, age, location, created_at FROM users ORDER BY created_at DESC")
+        )
+        users = result.fetchall()
+        
+        user_list = []
+        for user in users:
+            user_list.append({
+                "user_hash": user[0],
+                "name": user[1],
+                "age": user[2],
+                "location": user[3],
+                "created_at": user[4]
+            })
+        
+        return {"users": user_list, "total_count": len(user_list)}
+        
+    except Exception as e:
+        logger.error(f"Error listing users: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to list users")
 
 @app.get("/health")
 async def health_check():

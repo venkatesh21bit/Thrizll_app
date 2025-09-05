@@ -8,6 +8,8 @@ import { DemoScreen } from './src/screens/DemoScreen';
 import { DiscoverScreen } from './src/screens/discoverscreen';
 import { MatchesScreen } from './src/screens/matchescreen';
 import { ChatScreen } from './src/screens/chatscreen';
+import ProfileSetupScreen from './src/screens/ProfileSetupScreen';
+import { AuthScreen } from './src/screens/AuthScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createStackNavigator();
@@ -83,14 +85,22 @@ export default function App() {
           name="Consent"
           children={({ navigation }) => (
             <ConsentScreen
-              onConsentGiven={() => navigation.replace('Main')}
+              onConsentGiven={() => navigation.replace('Auth')}
               onConsentDeclined={() => {
                 // Handle declined consent, e.g., exit app or show message
               }}
             />
           )}
         />
-        <Stack.Screen name="Main" component={MainTabs} />
+        <Stack.Screen 
+          name="Auth" 
+          component={AuthScreen}
+        />
+        <Stack.Screen 
+          name="ProfileSetup" 
+          component={ProfileSetupScreen}
+        />
+        <Stack.Screen name="MainTabs" component={MainTabs} />
         <Stack.Screen 
           name="Chat" 
           component={ChatScreen}
