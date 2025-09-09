@@ -1,6 +1,7 @@
 import axios from 'axios';
 import { TelemetryEvent, InterestScore } from '../types/telemetry';
 import { LocalQueue } from './LocalQueue';
+import { API_CONFIG } from '../config/api';
 
 export interface UploadConfig {
   baseUrl: string;
@@ -24,10 +25,10 @@ export class UploadService {
 
   constructor(config?: UploadConfig) {
     this.config = {
-      baseUrl: 'http://localhost:8000',
+      baseUrl: API_CONFIG.baseUrl,
       batchSize: 50,
-      retryAttempts: 3,
-      retryDelayMs: 1000,
+      retryAttempts: API_CONFIG.retryAttempts,
+      retryDelayMs: API_CONFIG.retryDelayMs,
       ...config
     };
     this.localQueue = LocalQueue.getInstance();

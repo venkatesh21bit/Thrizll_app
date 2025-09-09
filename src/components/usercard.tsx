@@ -41,11 +41,15 @@ export const UserCard: React.FC<UserCardProps> = ({ user, onLike, onPass }) => {
         >
           <View style={styles.content}>
             <View style={styles.header}>
-              <Text style={styles.name}>{user.displayName}, {user.age}</Text>
+              <Text style={styles.name}>{user.name}, {user.age}</Text>
               {user.isOnline && <View style={styles.onlineIndicator} />}
             </View>
             
             <Text style={styles.bio}>{user.bio}</Text>
+            
+            <View style={styles.locationSection}>
+              <Text style={styles.location}>📍 {user.location}</Text>
+            </View>
             
             <View style={styles.compatibilitySection}>
               <Text style={styles.compatibilityLabel}>Compatibility</Text>
@@ -57,26 +61,32 @@ export const UserCard: React.FC<UserCardProps> = ({ user, onLike, onPass }) => {
 
             <View style={styles.insightsSection}>
               <Text style={styles.insightsTitle}>💕 Connection Style</Text>
-              <View style={styles.insightRow}>
-                <Text style={styles.insightLabel}>
-                  {getResponseSpeedEmoji(user.communicationStyle.responseSpeed)} Response Style:
-                </Text>
-                <Text style={styles.insightValue}>
-                  {user.communicationStyle.responseSpeed}
-                </Text>
-              </View>
-              <View style={styles.insightRow}>
-                <Text style={styles.insightLabel}>💬 Communication:</Text>
-                <Text style={styles.insightValue}>
-                  {user.communicationStyle.engagementStyle}
-                </Text>
-              </View>
-              <View style={styles.insightRow}>
-                <Text style={styles.insightLabel}>🎯 Attention Level:</Text>
-                <Text style={styles.insightValue}>
-                  {user.communicationStyle.attentionLevel}%
-                </Text>
-              </View>
+              {user.communicationStyle ? (
+                <>
+                  <View style={styles.insightRow}>
+                    <Text style={styles.insightLabel}>
+                      {getResponseSpeedEmoji(user.communicationStyle.responseSpeed)} Response Style:
+                    </Text>
+                    <Text style={styles.insightValue}>
+                      {user.communicationStyle.responseSpeed}
+                    </Text>
+                  </View>
+                  <View style={styles.insightRow}>
+                    <Text style={styles.insightLabel}>💬 Communication:</Text>
+                    <Text style={styles.insightValue}>
+                      {user.communicationStyle.engagementStyle}
+                    </Text>
+                  </View>
+                  <View style={styles.insightRow}>
+                    <Text style={styles.insightLabel}>🎯 Attention Level:</Text>
+                    <Text style={styles.insightValue}>
+                      {user.communicationStyle.attentionLevel}%
+                    </Text>
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.insightValue}>Getting to know them...</Text>
+              )}
             </View>
 
             <View style={styles.interestsSection}>
@@ -271,5 +281,13 @@ const styles = StyleSheet.create({
   },
   actionEmoji: {
     fontSize: 24,
+  },
+  locationSection: {
+    marginBottom: 10,
+  },
+  location: {
+    color: 'rgba(255, 255, 255, 0.8)',
+    fontSize: 14,
+    fontWeight: '500',
   },
 });

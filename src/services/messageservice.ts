@@ -1,8 +1,9 @@
 import { Message, Conversation } from '../types/user';
 import { TelemetrySDK } from './TelemetrySDK';
+import { API_CONFIG } from '../config/api';
 
 class MessagingService {
-  private apiUrl = 'http://172.20.10.2:8000/api/v1';
+  private apiUrl = `${API_CONFIG.baseUrl}/api/v1`;
   private websocket: WebSocket | null = null;
   private messageCallbacks: ((message: Message) => void)[] = [];
 
@@ -59,7 +60,7 @@ class MessagingService {
 
   connectWebSocket(conversationId: string) {
     try {
-      this.websocket = new WebSocket(`ws://172.20.10.2:8000/ws/chat/${conversationId}`);
+      this.websocket = new WebSocket(`${API_CONFIG.wsUrl}/ws/chat/${conversationId}`);
       
       this.websocket.onmessage = (event) => {
         const message: Message = JSON.parse(event.data);
@@ -105,7 +106,10 @@ class MessagingService {
               typingPattern: 'passionate',
               attentionLevel: 92,
               engagementStyle: 'romantic'
-            }
+            },
+            user_hash: 'hash_1',
+            name: 'Emma Rose',
+            location: 'San Francisco, CA'
           }
         ],
         messages: [

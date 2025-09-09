@@ -2,6 +2,7 @@ import { TelemetryEvent, InterestScore } from '../types/telemetry';
 import { LocalQueue } from './LocalQueue';
 import axios, { AxiosInstance } from 'axios';
 import { Platform } from 'react-native';
+import { API_CONFIG } from '../config/api';
 
 interface SessionCreateResponse {
   session_id: string;
@@ -29,24 +30,12 @@ export class UploadService {
   }
 
   constructor() {
-    // Use your deployed backend URL or localhost for development
-    const isDevelopment = __DEV__;
-    const isSimulator = Platform.OS === 'ios' && Platform.isPad === false;
-    const isEmulator = Platform.OS === 'android';
-    
-    if (isDevelopment && (isSimulator || isEmulator)) {
-      // Local development
-      this.baseURL = isSimulator || isEmulator 
-        ? 'http://localhost:8000' 
-        : 'http://10.0.2.2:8000';
-    } else {
-      // Production - replace with your deployed backend URL
-      this.baseURL = 'https://your-lovesync-backend.railway.app'; // Update this!
-    }
+    // Use the centralized API configuration
+    this.baseURL = API_CONFIG.baseUrl;
     
     this.api = axios.create({
       baseURL: this.baseURL,
-      timeout: 10000,
+      timeout: API_CONFIG.timeout,
       headers: {
         'Content-Type': 'application/json',
       },
