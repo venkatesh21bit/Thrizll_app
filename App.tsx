@@ -8,6 +8,7 @@ import { DemoScreen } from './src/screens/DemoScreen';
 import { DiscoverScreen } from './src/screens/discoverscreen';
 import { MatchesScreen } from './src/screens/matchescreen';
 import { ChatScreen } from './src/screens/chatscreen';
+import { NotificationsScreen } from './src/screens/NotificationsScreen';
 import ProfileSetupScreen from './src/screens/ProfileSetupScreen';
 import { AuthScreen } from './src/screens/AuthScreen';
 
@@ -44,6 +45,16 @@ const MainTabs = () => {
           tabBarLabel: 'Discover',
           tabBarIcon: ({ color }) => (
             <Text style={{ fontSize: 34, color }}>{'💖'}</Text>
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{
+          tabBarLabel: 'Notifications',
+          tabBarIcon: ({ color }) => (
+            <Text style={{ fontSize: 34, color }}>{'🔔'}</Text>
           ),
         }}
       />
