@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Animated, Text, TouchableOpacity, Alert } from 'react-native';
 import { PanGestureHandler, State } from 'react-native-gesture-handler';
+import { useNavigation } from '@react-navigation/native';
 import RevealCard from '../components/RevealCard';
 import { UserCard } from '../components/usercard';
 import { UserProfile } from '../types/user';
@@ -10,6 +11,7 @@ import { SessionManager } from '../services/SessionManager';
 import { API_CONFIG } from '../config/api';
 
 export const DiscoverScreen: React.FC = () => {
+  const navigation = useNavigation();
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [currentUserHash, setCurrentUserHash] = useState<string>('');
@@ -74,6 +76,31 @@ export const DiscoverScreen: React.FC = () => {
       setCurrentIndex(nextIndex);
     }
     setMode('swipe');
+  };
+
+  const handleLogout = () => {
+    Alert.alert(
+      'Logout',
+      'Are you sure you want to logout?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Logout', 
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await UserService.logout();
+              (navigation as any).reset({
+                index: 0,
+                routes: [{ name: 'Auth' }],
+              });
+            } catch (error) {
+              Alert.alert('Error', 'Failed to logout. Please try again.');
+            }
+          }
+        }
+      ]
+    );
   };
 
   const handleCompleteReveal = async () => {
@@ -190,6 +217,14 @@ export const DiscoverScreen: React.FC = () => {
   if (showRefresh || currentIndex >= users.length) {
     return (
       <View style={styles.container}>
+        {/* Header with logout button */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Discover</Text>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Text style={styles.logoutButtonText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
+        
         <View style={styles.refreshContainer}>
           <Text style={styles.refreshTitle}>🎉 You've seen everyone!</Text>
           <Text style={styles.refreshSubtitle}>
@@ -209,25 +244,35 @@ export const DiscoverScreen: React.FC = () => {
   if (mode === 'reveal') {
     return (
       <View style={styles.container}>
-        <RevealCard
-          user={currentUser}
-          sessionId={sessionId}
-          answers={answersByUser[currentUser.user_hash] || {}}
-          onAnswerChange={(sectionKey, text) => {
-            setAnswersByUser(prev => ({
-              ...prev,
-              [currentUser.user_hash]: {
-                ...(prev[currentUser.user_hash] || {}),
-                [sectionKey]: text,
-              }
-            }));
-          }}
-          onComplete={handleCompleteReveal}
-        />
-        <View style={{ height: 16 }} />
-        <TouchableOpacity style={styles.refreshButton} onPress={() => { setMode('swipe'); proceedToNextUser(); }}>
-          <Text style={styles.refreshButtonText}>Skip</Text>
-        </TouchableOpacity>
+        {/* Header with logout button */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>Discover</Text>
+          <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+            <Text style={styles.logoutButtonText}>Logout</Text>
+          </TouchableOpacity>
+        </View>
+        
+        <View style={styles.cardArea}>
+          <RevealCard
+            user={currentUser}
+            sessionId={sessionId}
+            answers={answersByUser[currentUser.user_hash] || {}}
+            onAnswerChange={(sectionKey, text) => {
+              setAnswersByUser(prev => ({
+                ...prev,
+                [currentUser.user_hash]: {
+                  ...(prev[currentUser.user_hash] || {}),
+                  [sectionKey]: text,
+                }
+              }));
+            }}
+            onComplete={handleCompleteReveal}
+          />
+          <View style={{ height: 16 }} />
+          <TouchableOpacity style={styles.refreshButton} onPress={() => { setMode('swipe'); proceedToNextUser(); }}>
+            <Text style={styles.refreshButtonText}>Skip</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
@@ -235,22 +280,32 @@ export const DiscoverScreen: React.FC = () => {
   // Swipe mode
   return (
     <View style={styles.container}>
-      <PanGestureHandler onGestureEvent={onGestureEvent} onHandlerStateChange={onHandlerStateChange}>
-        <Animated.View
-          style={[
-            styles.cardContainer,
-            {
-              transform: [
-                { translateX },
-                { translateY },
-                { rotate: rotate.interpolate({ inputRange: [-1, 0, 1], outputRange: ['-30deg', '0deg', '30deg'] }) },
-              ],
-            },
-          ]}
-        >
-          <UserCard user={currentUser} onLike={() => handleSwipe('right')} onPass={() => handleSwipe('left')} />
-        </Animated.View>
-      </PanGestureHandler>
+      {/* Header with logout button */}
+      <View style={styles.header}>
+        <Text style={styles.headerTitle}>Discover</Text>
+        <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
+          <Text style={styles.logoutButtonText}>Logout</Text>
+        </TouchableOpacity>
+      </View>
+      
+      <View style={styles.cardArea}>
+        <PanGestureHandler onGestureEvent={onGestureEvent} onHandlerStateChange={onHandlerStateChange}>
+          <Animated.View
+            style={[
+              styles.cardContainer,
+              {
+                transform: [
+                  { translateX },
+                  { translateY },
+                  { rotate: rotate.interpolate({ inputRange: [-1, 0, 1], outputRange: ['-30deg', '0deg', '30deg'] }) },
+                ],
+              },
+            ]}
+          >
+            <UserCard user={currentUser} onLike={() => handleSwipe('right')} onPass={() => handleSwipe('left')} />
+          </Animated.View>
+        </PanGestureHandler>
+      </View>
     </View>
   );
 };
@@ -262,6 +317,42 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingTop: 50,
+  },
+  header: {
+    position: 'absolute',
+    top: 50,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    zIndex: 10,
+  },
+  headerTitle: {
+    color: '#FF1493',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  logoutButton: {
+    backgroundColor: 'rgba(255, 20, 147, 0.2)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#FF1493',
+  },
+  logoutButtonText: {
+    color: '#FF1493',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  cardArea: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 80,
   },
   cardContainer: {
     alignItems: 'center',
