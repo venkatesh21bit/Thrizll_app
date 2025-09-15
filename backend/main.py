@@ -78,6 +78,11 @@ class InterestScore(BaseModel):
     timestamp: datetime
     session_id: str
 
+class RevealAnswers(BaseModel):
+    from_user_hash: str
+    to_user_hash: str
+    answers: Dict[str, Any]
+
 # User Profile Models
 class ProfileCreate(BaseModel):
     name: str
@@ -1366,6 +1371,71 @@ async def get_messages(conversation_id: str, user_hash: str, db: Session = Depen
     except Exception as e:
         logger.error(f"❌ Error getting messages for conversation {conversation_id}: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+# Persist reveal answers tied to a connection context
+@app.post("/api/v1/reveal/answers")
+async def submit_reveal_answers(payload: RevealAnswers, db: Session = Depends(get_db)):
+    try:
+        # Create table if not exists
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS reveal_answers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                from_user_hash VARCHAR NOT NULL,
+                to_user_hash VARCHAR NOT NULL,
+                answers TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        '''))
+        db.execute(text('''
+            INSERT INTO reveal_answers (from_user_hash, to_user_hash, answers)
+            VALUES (:from_user, :to_user, :answers)
+        '''), {
+            "from_user": payload.from_user_hash,
+            "to_user": payload.to_user_hash,
+            "answers": json.dumps(payload.answers)
+        })
+        db.commit()
+        return {"success": True, "message": "Answers saved"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error saving reveal answers: {e}")
+        raise HTTPException(status_code=500, detail="Failed to save answers")
+
+# Simple behavioral state classification based on recent features
+@app.get("/v1/state/{session_id}")
+async def get_behavior_state(session_id: str):
+    try:
+        extractor = FeatureExtractor()
+        feats = extractor.extract_realtime_features(session_id)
+        if not feats:
+            return {"state": "unknown", "confidence": 0.4}
+
+        # Heuristic rules
+        typing_speed = float(feats.get('typing_speed_chars_per_min', 0) or 0)
+        backspace_ratio = float(feats.get('backspace_ratio', 0) or 0)
+        pause_long = float(feats.get('long_pause_count', 0) or 0)
+        scroll_mean = float(feats.get('scroll_velocity_mean', 0) or 0)
+        activity_density = float(feats.get('activity_density', 0) or 0)
+
+        # Scores for states
+        engaged_score = (typing_speed/80.0) + (scroll_mean*0.2) + (activity_density*0.1)
+        hesitate_score = backspace_ratio*0.8 + min(pause_long, 3)*0.1
+        disengaged_score = max(0.0, 0.4 - activity_density*0.1) + max(0.0, 0.2 - scroll_mean*0.05)
+
+        # Normalize
+        total = engaged_score + hesitate_score + disengaged_score + 1e-6
+        engaged_p = engaged_score/total
+        hesitate_p = hesitate_score/total
+        disengaged_p = disengaged_score/total
+
+        if max(engaged_p, hesitate_p, disengaged_p) == engaged_p:
+            return {"state": "engaged", "confidence": round(min(1.0, engaged_p + 0.2), 2)}
+        if max(engaged_p, hesitate_p, disengaged_p) == hesitate_p:
+            return {"state": "hesitating", "confidence": round(min(1.0, hesitate_p + 0.2), 2)}
+        return {"state": "disengaged", "confidence": round(min(1.0, disengaged_p + 0.2), 2)}
+    except Exception as e:
+        logger.error(f"Error getting behavior state: {e}")
+        raise HTTPException(status_code=500, detail="Failed to compute state")
 
 @app.get("/api/v1/conversations", response_model=List[ConversationResponse])
 async def get_conversations(user_hash: str, db: Session = Depends(get_db)):

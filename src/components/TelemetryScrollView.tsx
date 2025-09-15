@@ -9,15 +9,17 @@ import { useInteractionTelemetry } from '../hooks/useTelemetry';
 
 interface TelemetryScrollViewProps extends ScrollViewProps {
   componentId?: string;
+  sessionIdOverride?: string;
 }
 
 export const TelemetryScrollView: React.FC<TelemetryScrollViewProps> = ({ 
   componentId, 
+  sessionIdOverride,
   onScroll, 
   children, 
   ...props 
 }) => {
-  const { logScroll } = useInteractionTelemetry();
+  const { logScroll } = useInteractionTelemetry({ sessionIdOverride });
   const lastScrollTime = useRef(0);
   const lastScrollY = useRef(0);
   const velocityHistory = useRef<number[]>([]);

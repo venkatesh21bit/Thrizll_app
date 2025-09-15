@@ -9,6 +9,7 @@ export interface TelemetryOptions {
   enableScrollTracking?: boolean;
   enableTapTracking?: boolean;
   enableTypeTracking?: boolean;
+  sessionIdOverride?: string; // use existing session id if provided
 }
 
 export function useInteractionTelemetry(options: TelemetryOptions = {}) {
@@ -31,9 +32,14 @@ export function useInteractionTelemetry(options: TelemetryOptions = {}) {
     return () => subscription?.remove();
   }, []);
 
-  // Handle screen focus/blur
+  // Handle screen focus/blur, unless a session override is provided
   useFocusEffect(
     useCallback(() => {
+      if (options.sessionIdOverride) {
+        currentSessionId.current = options.sessionIdOverride;
+        return () => {};
+      }
+
       const startSession = async () => {
         try {
           const sessionId = await telemetrySDK.current.startSession(screenName);
@@ -68,7 +74,7 @@ export function useInteractionTelemetry(options: TelemetryOptions = {}) {
         };
         endSession();
       };
-    }, [screenName])
+    }, [screenName, options.sessionIdOverride])
   );
 
   // Return session info and logging functions

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, Animated, Text, TouchableOpacity, Alert } from 'react-native';
 import { PanGestureHandler, State } from 'react-native-gesture-handler';
+import RevealCard from '../components/RevealCard';
 import { UserCard } from '../components/usercard';
 import { UserProfile } from '../types/user';
 import UserService from '../services/userservice';
@@ -14,6 +15,9 @@ export const DiscoverScreen: React.FC = () => {
   const [currentUserHash, setCurrentUserHash] = useState<string>('');
   const [isLoading, setIsLoading] = useState(false);
   const [showRefresh, setShowRefresh] = useState(false);
+  const [answersByUser, setAnswersByUser] = useState<Record<string, Record<string, string>>>({});
+  const [sessionId, setSessionId] = useState<string>('discover');
+  const [mode, setMode] = useState<'swipe' | 'reveal'>('swipe');
   const translateX = new Animated.Value(0);
   const translateY = new Animated.Value(0);
   const rotate = new Animated.Value(0);
@@ -27,7 +31,8 @@ export const DiscoverScreen: React.FC = () => {
     const userHash = await sessionManager.getCurrentUserHash();
     setCurrentUserHash(userHash);
     
-    TelemetrySDK.getInstance().startSession('discover');
+  TelemetrySDK.getInstance().startSession('discover');
+  setSessionId('discover');
     await loadUsers(userHash);
   };
 
@@ -61,92 +66,86 @@ export const DiscoverScreen: React.FC = () => {
     }
   };
 
-  const handleSwipe = async (direction: 'left' | 'right') => {
+  const proceedToNextUser = () => {
+    const nextIndex = currentIndex + 1;
+    if (nextIndex >= users.length) {
+      setShowRefresh(true);
+    } else {
+      setCurrentIndex(nextIndex);
+    }
+    setMode('swipe');
+  };
+
+  const handleCompleteReveal = async () => {
     const currentUser = users[currentIndex];
     if (!currentUser || !currentUserHash) {
-      console.log('❌ Swipe failed: missing user data', { currentUser: !!currentUser, currentUserHash });
+      proceedToNextUser();
       return;
     }
+    const sectionAnswers = answersByUser[currentUser.user_hash] || {};
+    const prettyKey = (k: string) => k.charAt(0).toUpperCase() + k.slice(1);
+    const lines = Object.entries(sectionAnswers)
+      .filter(([, v]) => (v || '').trim().length > 0)
+      .map(([k, v]) => `- ${prettyKey(k)}: ${v.trim()}`);
+    const message = lines.length
+      ? `Why I'm reaching out:\n${lines.join('\n')}`
+      : undefined;
 
-    const action = direction === 'right' ? 'like' : 'pass';
-    console.log(`👆 Swipe ${direction} on user:`, {
-      swiper: currentUserHash,
-      target: currentUser.user_hash,
-      targetName: currentUser.name,
-      action
-    });
-    
-    try {
-      // Record the swipe first
-      console.log('📝 Recording swipe...');
-      await UserService.recordSwipe(currentUserHash, currentUser.user_hash, action);
-      console.log('✅ Swipe recorded successfully');
-      
-      if (action === 'like') {
-        // Send connection request for right swipe
-        console.log('💕 Sending connection request...');
-        const connectionResult = await UserService.sendConnectionRequest(currentUserHash, currentUser.user_hash);
-        console.log('🔗 Connection request result:', connectionResult);
-        
-        if (connectionResult.success) {
-          Alert.alert('✨ Connection Request Sent!', 'You have sent a connection request to ' + currentUser.name);
-        } else {
-          Alert.alert('Error', connectionResult.message || 'Failed to send connection request');
-        }
-      }
+  try {
+      // Submit structured answers for ML/training
+      try {
+        await UserService.submitRevealAnswers(currentUserHash, currentUser.user_hash, sectionAnswers);
+      } catch {}
 
-      // Log telemetry
+      const result = await UserService.sendConnectionRequest(currentUserHash, currentUser.user_hash, message);
       await TelemetrySDK.getInstance().trackCustomEvent({
-        session_id: 'discover',
+        session_id: sessionId,
         screen: 'discover',
         etype: 'TAP',
-        meta: {
-          action: action,
-          userId: currentUser.user_hash,
-          compatibilityScore: currentUser.compatibilityScore
+        meta: { action: 'send_connection_with_reason', target: currentUser.user_hash, hasMessage: !!message }
+      });
+      if (result?.success) {
+        Alert.alert('✨ Connection Request Sent', 'Your reasons were shared with this user.');
+      } else {
+        Alert.alert('Error', result?.message || 'Failed to send connection request');
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Network error. Please try again.');
+    } finally {
+      setMode('swipe');
+      proceedToNextUser();
+    }
+  };
+
+  const handleSwipe = async (direction: 'left' | 'right') => {
+    const currentUser = users[currentIndex];
+    if (!currentUser || !currentUserHash) return;
+
+    if (direction === 'left') {
+      // Record pass and move to next
+      try { await UserService.recordSwipe(currentUserHash, currentUser.user_hash, 'pass'); } catch {}
+      Animated.parallel([
+        Animated.timing(translateX, { toValue: -300, duration: 250, useNativeDriver: true }),
+        Animated.timing(rotate, { toValue: -0.3, duration: 250, useNativeDriver: true }),
+      ]).start(() => {
+        translateX.setValue(0);
+        translateY.setValue(0);
+        rotate.setValue(0);
+        const nextIndex = currentIndex + 1;
+        if (nextIndex >= users.length) {
+          setShowRefresh(true);
+        } else {
+          setCurrentIndex(nextIndex);
         }
       });
-
-    } catch (error) {
-      console.error('❌ Failed to process swipe:', error);
-      Alert.alert('Error', 'Failed to process swipe. Please try again.');
-    }
-
-    // Animate card out
-    Animated.parallel([
-      Animated.timing(translateX, {
-        toValue: direction === 'right' ? 300 : -300,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-      Animated.timing(rotate, {
-        toValue: direction === 'right' ? 0.3 : -0.3,
-        duration: 300,
-        useNativeDriver: true,
-      }),
-    ]).start(() => {
-      // Reset animations and move to next card
+    } else {
+      // Like: record swipe and show reveal card for this user
+      try { await UserService.recordSwipe(currentUserHash, currentUser.user_hash, 'like'); } catch {}
+      setMode('reveal');
+      // Snap card back visually
       translateX.setValue(0);
       translateY.setValue(0);
       rotate.setValue(0);
-      
-      const nextIndex = currentIndex + 1;
-      if (nextIndex >= users.length) {
-        setShowRefresh(true);
-      } else {
-        setCurrentIndex(nextIndex);
-      }
-    });
-  };
-
-  const handleLike = () => handleSwipe('right');
-  const handlePass = () => handleSwipe('left');
-
-  const handleRefresh = async () => {
-    if (currentUserHash) {
-      console.log('🔄 Refreshing users with refresh mode...');
-      setShowRefresh(false); // Hide refresh screen while loading
-      await loadUsers(currentUserHash, true); // Pass true for refresh mode
     }
   };
 
@@ -158,28 +157,27 @@ export const DiscoverScreen: React.FC = () => {
   const onHandlerStateChange = (event: any) => {
     if (event.nativeEvent.state === State.END) {
       const { translationX, velocityX } = event.nativeEvent;
-      
       if (Math.abs(translationX) > 100 || Math.abs(velocityX) > 500) {
         handleSwipe(translationX > 0 ? 'right' : 'left');
       } else {
-        // Snap back to center
         Animated.parallel([
-          Animated.spring(translateX, {
-            toValue: 0,
-            useNativeDriver: true,
-          }),
-          Animated.spring(translateY, {
-            toValue: 0,
-            useNativeDriver: true,
-          }),
-          Animated.spring(rotate, {
-            toValue: 0,
-            useNativeDriver: true,
-          }),
+          Animated.spring(translateX, { toValue: 0, useNativeDriver: true }),
+          Animated.spring(translateY, { toValue: 0, useNativeDriver: true }),
+          Animated.spring(rotate, { toValue: 0, useNativeDriver: true }),
         ]).start();
       }
     }
   };
+
+  const handleRefresh = async () => {
+    if (currentUserHash) {
+      console.log('🔄 Refreshing users with refresh mode...');
+      setShowRefresh(false); // Hide refresh screen while loading
+      await loadUsers(currentUserHash, true); // Pass true for refresh mode
+    }
+  };
+
+  // Legacy swipe handlers removed for reveal flow
 
   if (isLoading) {
     return (
@@ -208,12 +206,36 @@ export const DiscoverScreen: React.FC = () => {
   const currentUser = users[currentIndex];
   if (!currentUser) return <View style={styles.container} />;
 
+  if (mode === 'reveal') {
+    return (
+      <View style={styles.container}>
+        <RevealCard
+          user={currentUser}
+          sessionId={sessionId}
+          answers={answersByUser[currentUser.user_hash] || {}}
+          onAnswerChange={(sectionKey, text) => {
+            setAnswersByUser(prev => ({
+              ...prev,
+              [currentUser.user_hash]: {
+                ...(prev[currentUser.user_hash] || {}),
+                [sectionKey]: text,
+              }
+            }));
+          }}
+          onComplete={handleCompleteReveal}
+        />
+        <View style={{ height: 16 }} />
+        <TouchableOpacity style={styles.refreshButton} onPress={() => { setMode('swipe'); proceedToNextUser(); }}>
+          <Text style={styles.refreshButtonText}>Skip</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  // Swipe mode
   return (
     <View style={styles.container}>
-      <PanGestureHandler
-        onGestureEvent={onGestureEvent}
-        onHandlerStateChange={onHandlerStateChange}
-      >
+      <PanGestureHandler onGestureEvent={onGestureEvent} onHandlerStateChange={onHandlerStateChange}>
         <Animated.View
           style={[
             styles.cardContainer,
@@ -221,20 +243,12 @@ export const DiscoverScreen: React.FC = () => {
               transform: [
                 { translateX },
                 { translateY },
-                { rotate: rotate.interpolate({
-                    inputRange: [-1, 0, 1],
-                    outputRange: ['-30deg', '0deg', '30deg']
-                  })
-                }
-              ]
-            }
+                { rotate: rotate.interpolate({ inputRange: [-1, 0, 1], outputRange: ['-30deg', '0deg', '30deg'] }) },
+              ],
+            },
           ]}
         >
-          <UserCard
-            user={currentUser}
-            onLike={handleLike}
-            onPass={handlePass}
-          />
+          <UserCard user={currentUser} onLike={() => handleSwipe('right')} onPass={() => handleSwipe('left')} />
         </Animated.View>
       </PanGestureHandler>
     </View>

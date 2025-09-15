@@ -114,6 +114,15 @@ export class UploadService {
     }
   }
 
+  async getState(sessionId: string): Promise<{ state: string; confidence: number } | null> {
+    try {
+      const response = await this.api.get(`/v1/state/${sessionId}`);
+      return response.data;
+    } catch (error) {
+      return null;
+    }
+  }
+
   connectRealtime(sessionId: string, onScore: (score: InterestScore) => void): WebSocket | null {
     try {
       const wsUrl = this.baseURL.replace('http', 'ws') + `/v1/score/ws/${sessionId}`;

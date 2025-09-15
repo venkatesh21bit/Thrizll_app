@@ -9,15 +9,17 @@ import { useInteractionTelemetry } from '../hooks/useTelemetry';
 
 interface TelemetryTextInputProps extends TextInputProps {
   componentId?: string;
+  sessionIdOverride?: string;
 }
 
 export const TelemetryTextInput: React.FC<TelemetryTextInputProps> = ({ 
   componentId, 
+  sessionIdOverride,
   onChangeText, 
   onChange,
   ...props 
 }) => {
-  const { logType } = useInteractionTelemetry();
+  const { logType } = useInteractionTelemetry({ sessionIdOverride });
   const lastChangeTime = useRef(0);
   const lastTextLength = useRef(0);
   const keyIntervals = useRef<number[]>([]);
