@@ -1,12 +1,14 @@
 {
   "version": 2,
-  "name": "thrizll-app",
+  "buildCommand": "npx expo export --platform web",
+  "outputDirectory": "dist",
   "builds": [
     {
       "src": "package.json",
       "use": "@vercel/static-build",
       "config": {
-        "distDir": "web-build"
+        "buildCommand": "npx expo export --platform web",
+        "distDir": "dist"
       }
     }
   ],
@@ -15,6 +17,18 @@
       "src": "/static/(.*)",
       "headers": {
         "cache-control": "public, immutable, max-age=31536000"
+      }
+    },
+    {
+      "src": "/manifest.json",
+      "headers": {
+        "content-type": "application/json"
+      }
+    },
+    {
+      "src": "/(.*\\.(js|css|png|jpg|jpeg|gif|svg|ico|woff|woff2|ttf|eot))",
+      "headers": {
+        "cache-control": "public, max-age=31536000"
       }
     },
     {

@@ -23,6 +23,7 @@ export const webStyles = StyleSheet.create({
   // Web-safe shadows (web doesn't support all shadow props)
   webShadow: Platform.select({
     web: {
+      // @ts-ignore - Web-specific CSS properties
       boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)',
     },
     default: {
@@ -33,36 +34,40 @@ export const webStyles = StyleSheet.create({
       elevation: 8,
     },
   }),
-  
-  // Web-specific text selection
-  selectableText: Platform.select({
-    web: {
-      userSelect: 'text',
-      cursor: 'text',
-    },
-    default: {},
+});
+
+// Web-specific scroll styles (not using StyleSheet.create to avoid TS errors)
+export const getWebScrollStyle = () => ({
+  flex: 1,
+  ...(Platform.OS === 'web' && {
+    // @ts-ignore - Web-specific CSS properties  
+    overflow: 'auto',
+    WebkitOverflowScrolling: 'touch',
+    scrollBehavior: 'smooth',
+    height: '100%',
   }),
-  
-  // Web-specific button hover effects
-  hoverButton: Platform.select({
-    web: {
-      cursor: 'pointer',
-      transition: 'all 0.2s ease',
-      ':hover': {
-        opacity: 0.8,
-        transform: 'scale(1.02)',
-      },
-    },
-    default: {},
+});
+
+// Scrollable content container
+export const getScrollableContentStyle = () => ({
+  flex: 1,
+  ...(Platform.OS === 'web' && {
+    // @ts-ignore - Web-specific CSS properties
+    overflowY: 'auto',
+    height: '100vh',
+    maxHeight: '100vh',
   }),
-  
-  // Web-specific scrollable areas
-  webScrollView: Platform.select({
-    web: {
-      overflow: 'auto',
-      scrollBehavior: 'smooth',
-    },
-    default: {},
+});
+
+// Web header style
+export const getWebHeaderStyle = () => ({
+  ...(Platform.OS === 'web' && {
+    // @ts-ignore - Web-specific CSS properties
+    position: 'sticky',
+    top: 0,
+    zIndex: 1000,
+    backdropFilter: 'blur(10px)',
+    WebkitBackdropFilter: 'blur(10px)',
   }),
 });
 
@@ -102,11 +107,31 @@ export const getWebSafeStyle = (style: any) => {
     delete webSafeStyle.shadowRadius;
     delete webSafeStyle.elevation;
     
+    // @ts-ignore - Web-specific CSS properties
     webSafeStyle.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)';
   }
   
   return webSafeStyle;
 };
+
+// Web-specific button styles
+export const getWebButtonStyle = () => ({
+  ...(Platform.OS === 'web' && {
+    // @ts-ignore - Web-specific CSS properties
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    userSelect: 'none',
+  }),
+});
+
+// Web-specific text styles
+export const getWebTextStyle = () => ({
+  ...(Platform.OS === 'web' && {
+    // @ts-ignore - Web-specific CSS properties
+    userSelect: 'text',
+    cursor: 'text',
+  }),
+});
 
 // Common web component styles
 export const webComponentStyles = StyleSheet.create({
@@ -130,19 +155,5 @@ export const webComponentStyles = StyleSheet.create({
     flex: 1,
     maxWidth: Platform.OS === 'web' ? 500 : '100%',
     marginHorizontal: Platform.OS === 'web' ? 'auto' : 0,
-  },
-  
-  // Web-specific header
-  webHeader: {
-    ...Platform.select({
-      web: {
-        position: 'sticky',
-        top: 0,
-        zIndex: 1000,
-        backdropFilter: 'blur(10px)',
-        WebkitBackdropFilter: 'blur(10px)',
-      },
-      default: {},
-    }),
   },
 });

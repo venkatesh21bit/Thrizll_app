@@ -3,9 +3,11 @@ import {
   ScrollView as RNScrollView, 
   ScrollViewProps, 
   NativeSyntheticEvent, 
-  NativeScrollEvent 
+  NativeScrollEvent,
+  Platform 
 } from 'react-native';
 import { useInteractionTelemetry } from '../hooks/useTelemetry';
+import { getWebScrollStyle } from '../styles/webStyles';
 
 interface TelemetryScrollViewProps extends ScrollViewProps {
   componentId?: string;
@@ -59,6 +61,7 @@ export const TelemetryScrollView: React.FC<TelemetryScrollViewProps> = ({
   return (
     <RNScrollView
       {...props}
+      style={[props.style, Platform.OS === 'web' ? getWebScrollStyle() as any : undefined]}
       onScroll={handleScroll}
       scrollEventThrottle={16}
     >

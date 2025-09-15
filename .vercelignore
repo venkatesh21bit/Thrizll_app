@@ -1,0 +1,38 @@
+# Ignore backend folder and related files
+backend/
+*.db
+*.sqlite
+*.sqlite3
+telemetry.db
+
+# Ignore development files
+.env.local
+.env.development
+.expo/
+.expo-shared/
+
+# Ignore build artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Ignore OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Ignore IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Ignore temporary files
+*.tmp
+*.temp
+.cache/

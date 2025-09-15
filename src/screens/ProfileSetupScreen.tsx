@@ -13,6 +13,7 @@ import {
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import userService from '../services/userservice';
+import { getScrollableContentStyle } from '../styles/webStyles';
 
 export default function ProfileSetupScreen() {
   const navigation = useNavigation();
@@ -161,7 +162,7 @@ export default function ProfileSetupScreen() {
   };
 
   return (
-    <ScrollView style={styles.container}>
+    <ScrollView style={[styles.container, Platform.OS === 'web' ? getScrollableContentStyle() as any : undefined]}>
       <View style={styles.header}>
         <Text style={styles.title}>Create Your Profile</Text>
         <Text style={styles.subtitle}>Let others get to know you!</Text>

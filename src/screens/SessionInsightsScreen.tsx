@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { View, Text, StyleSheet, Dimensions, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Dimensions, ScrollView, Platform } from 'react-native';
 import { SessionInsightsService, SessionSample } from '../services/SessionInsightsService';
+import { getScrollableContentStyle } from '../styles/webStyles';
 
 const { width } = Dimensions.get('window');
 
@@ -37,7 +38,10 @@ export const SessionInsightsScreen: React.FC<{ sessionId: string }> = ({ session
   const avgScroll = scrolls.length ? (scrolls.reduce((s, r) => s + (r.value || 0), 0) / scrolls.length) : 0;
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ padding: 16 }}>
+    <ScrollView 
+      style={[styles.container, Platform.OS === 'web' ? getScrollableContentStyle() as any : undefined]} 
+      contentContainerStyle={{ padding: 16 }}
+    >
       <Text style={styles.title}>Session Insights</Text>
       <Text style={styles.sub}>Session: {sessionId}</Text>
 

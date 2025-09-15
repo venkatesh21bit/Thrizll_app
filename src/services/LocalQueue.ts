@@ -1,12 +1,19 @@
-import * as SQLite from 'expo-sqlite';
+import { Platform } from 'react-native';
 import { TelemetryEvent } from '../types/telemetry';
+
+// Conditionally import SQLite only on non-web platforms
+let SQLite: any = null;
+if (Platform.OS !== 'web') {
+  SQLite = require('expo-sqlite');
+}
 
 export class LocalQueue {
   private static instance: LocalQueue;
-  private db: SQLite.SQLiteDatabase | null = null;
+  private db: any = null;
   private readonly DB_NAME = 'telemetry.db';
   private readonly TABLE_NAME = 'events';
   private isInitialized = false;
+  private webStorage: TelemetryEvent[] = []; // Fallback storage for web
 
   static getInstance(): LocalQueue {
     if (!LocalQueue.instance) {
@@ -20,7 +27,27 @@ export class LocalQueue {
   }
 
   async initialize(): Promise<void> {
-    if (this.isInitialized && this.db) {
+    if (this.isInitialized) {
+      return;
+    }
+
+    if (Platform.OS === 'web') {
+      // Use localStorage for web
+      try {
+        const stored = localStorage.getItem('telemetry_events');
+        this.webStorage = stored ? JSON.parse(stored) : [];
+      } catch (error) {
+        console.warn('Failed to load telemetry from localStorage:', error);
+        this.webStorage = [];
+      }
+      this.isInitialized = true;
+      return;
+    }
+
+    // Native platform SQLite initialization
+    if (!SQLite) {
+      console.warn('SQLite not available on this platform');
+      this.isInitialized = true;
       return;
     }
 
@@ -55,6 +82,18 @@ export class LocalQueue {
   }
 
   async enqueue(event: TelemetryEvent): Promise<void> {
+    if (Platform.OS === 'web') {
+      // Use localStorage for web
+      try {
+        const eventWithId = { ...event, id: Date.now() + Math.random(), uploaded: false };
+        this.webStorage.push(eventWithId);
+        localStorage.setItem('telemetry_events', JSON.stringify(this.webStorage));
+      } catch (error) {
+        console.warn('Failed to store telemetry event on web:', error);
+      }
+      return;
+    }
+
     if (!this.db) {
       throw new Error('Database not initialized');
     }
@@ -86,6 +125,18 @@ export class LocalQueue {
   }
 
   async getPendingEvents(limit: number = 100): Promise<TelemetryEvent[]> {
+    if (Platform.OS === 'web') {
+      // Use localStorage for web
+      try {
+        const stored = localStorage.getItem('telemetry_events');
+        const events = stored ? JSON.parse(stored) : [];
+        return events.filter((event: any) => !event.uploaded).slice(0, limit);
+      } catch (error) {
+        console.warn('Failed to get pending events from localStorage:', error);
+        return [];
+      }
+    }
+
     if (!this.db || !this.isInitialized) {
       console.log('LocalQueue database not initialized, returning empty events array');
       return [];
@@ -120,6 +171,24 @@ export class LocalQueue {
   }
 
   async markAsUploaded(eventIds: number[]): Promise<void> {
+    if (Platform.OS === 'web') {
+      // Use localStorage for web
+      try {
+        const stored = localStorage.getItem('telemetry_events');
+        const events = stored ? JSON.parse(stored) : [];
+        events.forEach((event: any) => {
+          if (eventIds.includes(event.id)) {
+            event.uploaded = true;
+          }
+        });
+        localStorage.setItem('telemetry_events', JSON.stringify(events));
+        this.webStorage = events;
+      } catch (error) {
+        console.warn('Failed to mark events as uploaded on web:', error);
+      }
+      return;
+    }
+
     if (!this.db || !this.isInitialized || eventIds.length === 0) {
       console.log('LocalQueue database not initialized or no events to mark');
       return;
@@ -137,6 +206,18 @@ export class LocalQueue {
   }
 
   async getEventCount(): Promise<number> {
+    if (Platform.OS === 'web') {
+      // Use localStorage for web
+      try {
+        const stored = localStorage.getItem('telemetry_events');
+        const events = stored ? JSON.parse(stored) : [];
+        return events.filter((event: any) => !event.uploaded).length;
+      } catch (error) {
+        console.warn('Failed to get event count from localStorage:', error);
+        return 0;
+      }
+    }
+
     if (!this.db || !this.isInitialized) {
       console.log('LocalQueue database not initialized, returning 0 count');
       return 0;
@@ -152,7 +233,26 @@ export class LocalQueue {
       console.error('Failed to get event count:', error);
       return 0;
     }
-  }  async clearOldEvents(olderThanDays: number = 7): Promise<void> {
+  }
+
+  async clearOldEvents(olderThanDays: number = 7): Promise<void> {
+    if (Platform.OS === 'web') {
+      // Use localStorage for web
+      try {
+        const cutoffTime = Date.now() - (olderThanDays * 24 * 60 * 60 * 1000);
+        const stored = localStorage.getItem('telemetry_events');
+        const events = stored ? JSON.parse(stored) : [];
+        const filteredEvents = events.filter((event: any) => 
+          event.ts >= cutoffTime || !event.uploaded
+        );
+        localStorage.setItem('telemetry_events', JSON.stringify(filteredEvents));
+        this.webStorage = filteredEvents;
+      } catch (error) {
+        console.warn('Failed to clear old events from localStorage:', error);
+      }
+      return;
+    }
+
     if (!this.db || !this.isInitialized) {
       console.log('LocalQueue database not initialized, skipping cleanup');
       return;

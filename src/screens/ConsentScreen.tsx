@@ -8,8 +8,10 @@ import {
   ScrollView,
   Alert,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { ConsentManager, ConsentSettings } from '../services/ConsentManager';
+import { getScrollableContentStyle } from '../styles/webStyles';
 
 interface ConsentScreenProps {
   onConsentGiven: (settings: ConsentSettings) => void;
@@ -56,7 +58,10 @@ export const ConsentScreen: React.FC<ConsentScreenProps> = ({
 
   return (
     <View style={styles.container}>
-      <ScrollView style={styles.scrollContainer} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={[styles.scrollContainer, Platform.OS === 'web' ? getScrollableContentStyle() as any : undefined]} 
+        showsVerticalScrollIndicator={false}
+      >
         <View style={styles.content}>
           <View style={styles.header}>
             <Text style={styles.emoji}>💕</Text>
