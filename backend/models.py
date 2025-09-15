@@ -5,11 +5,13 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.types import JSON
 
 # Database setup
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://thrizll_user:YImqNQ1YXFPRHZXquTuUMF5iu6OKqxTD@dpg-d341fs6mcj7s73apn2a0-a/thrizll")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg://thrizll_user:YImqNQ1YXFPRHZXquTuUMF5iu6OKqxTD@dpg-d341fs6mcj7s73apn2a0-a/thrizll")
 
 # For Render, DATABASE_URL might have postgres:// instead of postgresql://
 if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql+psycopg://", 1)
+elif DATABASE_URL.startswith("postgresql://") and "+psycopg" not in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+psycopg://", 1)
 
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
