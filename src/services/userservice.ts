@@ -189,6 +189,23 @@ class UserService {
     }
   }
 
+  async submitRevealAnswers(fromUserHash: string, toUserHash: string, answers: Record<string, string>): Promise<{ success: boolean; message: string }> {
+    try {
+      const response = await fetch(`${this.apiUrl}/reveal/answers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from_user_hash: fromUserHash, to_user_hash: toUserHash, answers }),
+      });
+      if (response.ok) {
+        const result = await response.json();
+        return result;
+      }
+    } catch (error) {
+      console.warn('submitRevealAnswers failed (non-blocking):', error);
+    }
+    return { success: false, message: 'not submitted' };
+  }
+
   async getConnectionRequests(userHash: string): Promise<any[]> {
     try {
       console.log('📥 Getting connection requests for:', userHash);

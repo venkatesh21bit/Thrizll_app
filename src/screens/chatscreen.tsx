@@ -23,11 +23,13 @@ import { TelemetryScrollView } from '../components/TelemetryScrollView';
 import { useInteractionTelemetry } from '../hooks/useTelemetry';
 import { InterestScore } from '../types/telemetry';
 import { SessionManager } from '../services/SessionManager';
+import { UploadService } from '../services/UploadManager';
+import { SessionInsightsService } from '../services/SessionInsightsService';
 
 export const ChatScreen: React.FC = () => {
   const route = useRoute();
   const { conversationId } = route.params as { conversationId: string };
-  const { sessionId } = useInteractionTelemetry();
+  // We'll attach the telemetry session once created
   
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentUserHash, setCurrentUserHash] = useState<string>('');
@@ -38,6 +40,12 @@ export const ChatScreen: React.FC = () => {
   const [keyPressCount, setKeyPressCount] = useState(0);
   const [backspaceCount, setBackspaceCount] = useState(0);
   const [interestScore, setInterestScore] = useState<InterestScore | undefined>();
+  const [telemetrySessionId, setTelemetrySessionId] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const [behaviorState, setBehaviorState] = useState<{ state: string; confidence: number } | null>(null);
+
+  // Bind telemetry hook to our managed session so nested telemetry components use it
+  useInteractionTelemetry({ sessionIdOverride: telemetrySessionId || undefined });
   const [fadeAnim] = useState(new Animated.Value(0));
   const [heartPulse] = useState(new Animated.Value(1));
   const [lastKeystrokeTimestamp, setLastKeystrokeTimestamp] = useState(0);
@@ -48,6 +56,7 @@ export const ChatScreen: React.FC = () => {
   const lastScrollTime = useRef(0);
   const lastScrollOffset = useRef(0);
   const hesitationTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [lastActivityTs, setLastActivityTs] = useState<number>(Date.now());
   
   const flatListRef = useRef<FlatList>(null);
 
@@ -55,9 +64,22 @@ export const ChatScreen: React.FC = () => {
     loadConversation();
     MessagingService.connectWebSocket(conversationId);
     MessagingService.onNewMessage(handleNewMessage);
-    
-    // Start telemetry session for this chat
-    TelemetrySDK.getInstance().startSession(`chat_${conversationId}`);
+
+    // Start a dedicated telemetry session for this chat and hook realtime updates
+    (async () => {
+      try {
+        const sid = await TelemetrySDK.getInstance().startSession(`chat_${conversationId}`);
+        setTelemetrySessionId(sid);
+
+        // Connect WebSocket for realtime scores
+        const ws = UploadService.getInstance().connectRealtime(sid, (score) => {
+          setInterestScore({ ...score, timestamp: Date.now() });
+        });
+        wsRef.current = ws;
+      } catch (e) {
+        console.warn('Failed starting telemetry session for chat:', e);
+      }
+    })();
 
     // Animate entrance
     Animated.timing(fadeAnim, {
@@ -68,26 +90,122 @@ export const ChatScreen: React.FC = () => {
 
     return () => {
       MessagingService.disconnectWebSocket();
-  if (thinkingPauseTimeout.current) clearTimeout(thinkingPauseTimeout.current);
-  if (hesitationTimeout.current) clearTimeout(hesitationTimeout.current);
+      if (thinkingPauseTimeout.current) clearTimeout(thinkingPauseTimeout.current);
+      if (hesitationTimeout.current) clearTimeout(hesitationTimeout.current);
+      if (wsRef.current) {
+        try { wsRef.current.close(); } catch {}
+        wsRef.current = null;
+      }
     };
   }, [conversationId]);
 
   // Real-time interest score updates based on chat interactions
+  // Compute a meaningful connection score and confidence
+  const computeConnectionScore = () => {
+    const now = Date.now();
+    const windowMs = 5 * 60 * 1000; // last 5 minutes
+    const recent = messages.filter(m => {
+      const ts = (m.timestamp instanceof Date) ? m.timestamp.getTime() : new Date((m as any).timestamp).getTime();
+      return !isNaN(ts) && now - ts <= windowMs;
+    });
+
+    const totalRecent = recent.length;
+
+    // Activity: msgs per minute (cap at 10 per min)
+    const msgsPerMin = totalRecent / (windowMs / 60000);
+    const activityScore = Math.min(1, msgsPerMin / 10);
+
+    // Reciprocity: alternation across last 10 messages
+    const lastN = recent.slice(-10);
+    let transitions = 0;
+    for (let i = 1; i < lastN.length; i++) {
+      if (lastN[i].senderId !== lastN[i - 1].senderId) transitions++;
+    }
+    const reciprocity = lastN.length > 1 ? transitions / (lastN.length - 1) : 0;
+
+    // Response length (avg chars capped at 300)
+    const avgLen = lastN.length ? lastN.reduce((s, m) => s + (m.content?.length || 0), 0) / lastN.length : 0;
+    const lengthScore = Math.min(1, avgLen / 300);
+
+    // Tempo consistency from current typing session
+    const intervals = keystrokeIntervals;
+    let tempoScore = 0.5; // neutral
+    if (intervals.length >= 3) {
+      const mean = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+      const variance = intervals.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / intervals.length;
+      const stdev = Math.sqrt(variance);
+      const cv = mean > 0 ? stdev / mean : 1; // coefficient of variation
+      // Lower CV => smoother typing => better score
+      tempoScore = Math.max(0, Math.min(1, 1 - cv));
+      // Penalize many thinking pauses
+      tempoScore = Math.max(0, tempoScore - Math.min(0.4, thinkingPauses * 0.05));
+    }
+
+    // Latency: median time you take to reply to the other (cap at 120s)
+    const otherMsgs = recent.filter(m => m.senderId !== currentUserHash);
+    const myMsgs = recent.filter(m => m.senderId === currentUserHash);
+    const latencies: number[] = [];
+    otherMsgs.forEach(o => {
+      const ots = (o.timestamp instanceof Date) ? o.timestamp.getTime() : new Date((o as any).timestamp).getTime();
+      const reply = myMsgs.find(m => {
+        const ts = (m.timestamp instanceof Date) ? m.timestamp.getTime() : new Date((m as any).timestamp).getTime();
+        return ts > ots;
+      });
+      if (reply) {
+        const rts = (reply.timestamp instanceof Date) ? reply.timestamp.getTime() : new Date((reply as any).timestamp).getTime();
+        latencies.push(rts - ots);
+      }
+    });
+    latencies.sort((a, b) => a - b);
+    const medianLatency = latencies.length ? latencies[Math.floor(latencies.length / 2)] : 60000; // default 60s
+    const latencyScore = Math.max(0, Math.min(1, 1 - (medianLatency / 120000))); // 0..1 (<=120s good)
+
+    // Balance: closeness to 50/50 between both users
+    const myCount = myMsgs.length;
+    const theirCount = otherMsgs.length;
+    const totalCount = myCount + theirCount || 1;
+    const myProp = myCount / totalCount;
+    const balanceScore = 1 - Math.abs(myProp - 0.5) * 2; // 1 when 50/50, 0 when 100/0
+
+    // Reading involvement proxy from scroll velocity and hesitations
+    const readingScore = Math.max(0, Math.min(1, (scrollAnalytics.hesitations > 0 ? 0.6 : 0.4) + Math.min(0.4, scrollAnalytics.velocity * 0.5)));
+
+    // Weighted combination
+    const combined = (
+      0.20 * activityScore +
+      0.20 * reciprocity +
+      0.15 * lengthScore +
+      0.15 * latencyScore +
+      0.10 * tempoScore +
+      0.10 * balanceScore +
+      0.10 * readingScore
+    );
+
+    // Inactivity decay (half-life ~10 minutes)
+    const inactiveMs = now - lastActivityTs;
+    const halfLife = 10 * 60 * 1000;
+    const decay = Math.pow(0.5, inactiveMs / halfLife);
+
+    const score = Math.max(0, Math.min(100, combined * 100 * decay));
+
+    // Confidence: based on evidence volume, reply coverage, and balance
+    const evidence = Math.min(1, messages.length / 20); // up to 20 msgs
+    const repliedWithin60 = latencies.filter(l => l <= 60000).length;
+    const coverage = otherMsgs.length ? repliedWithin60 / otherMsgs.length : 0.5;
+    const confidence = Math.max(0.3, Math.min(1, 0.5 * evidence + 0.3 * coverage + 0.2 * balanceScore));
+
+    return { score, confidence };
+  };
+
   useEffect(() => {
     const interval = setInterval(() => {
-      if (sessionId) {
-        // Calculate dynamic score based on chat activity
-        const baseScore = 40 + Math.random() * 45;
-        const engagementBonus = isTyping ? 15 : 0;
-        const messageBonus = messages.length > 0 ? Math.min(20, messages.length * 2) : 0;
-        const confidence = 0.6 + Math.random() * 0.3;
-        
+      if (telemetrySessionId && !wsRef.current) {
+        const { score, confidence } = computeConnectionScore();
         setInterestScore({
-          score: Math.min(100, baseScore + engagementBonus + messageBonus),
+          score,
           confidence,
           timestamp: Date.now(),
-          session_id: sessionId,
+          session_id: telemetrySessionId,
         });
 
         // Heart pulse animation during active interaction
@@ -109,7 +227,24 @@ export const ChatScreen: React.FC = () => {
     }, 2000);
 
     return () => clearInterval(interval);
-  }, [sessionId, isTyping, messages.length, heartPulse]);
+  }, [telemetrySessionId, isTyping, messages, heartPulse, scrollAnalytics, lastActivityTs, keystrokeIntervals, thinkingPauses, currentUserHash]);
+
+  // Poll lightweight behavioral state from backend
+  useEffect(() => {
+    if (!telemetrySessionId) return;
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const upload = UploadService.getInstance();
+        // @ts-ignore - method added in UploadService
+        const s = await upload.getState(telemetrySessionId);
+        if (!cancelled && s) setBehaviorState({ state: s.state, confidence: s.confidence });
+      } catch {}
+    };
+    const id = setInterval(poll, 3000);
+    poll();
+    return () => { cancelled = true; clearInterval(id); };
+  }, [telemetrySessionId]);
 
   const loadConversation = async () => {
     try {
@@ -128,12 +263,13 @@ export const ChatScreen: React.FC = () => {
 
   const handleNewMessage = (message: Message) => {
     setMessages(prev => [...prev, message]);
+  setLastActivityTs(Date.now());
     // Note: Auto-scroll functionality will need to be handled differently with TelemetryScrollView
   };
 
   const handleTyping = (text: string) => {
     const now = Date.now();
-    if (!isTyping) {
+  if (!isTyping) {
       setIsTyping(true);
       setTypingStartTime(now);
       setKeyPressCount(0);
@@ -147,44 +283,50 @@ export const ChatScreen: React.FC = () => {
     if (lastKeystrokeTimestamp) {
       const interval = now - lastKeystrokeTimestamp;
       setKeystrokeIntervals(prev => [...prev, interval]);
+  SessionInsightsService.record(conversationId, { t: now, type: 'keystroke', value: interval });
     }
     setLastKeystrokeTimestamp(now);
 
     // Detect backspace (text got shorter)
     if (text.length < newMessage.length) {
       setBackspaceCount(prev => prev + 1);
+  SessionInsightsService.record(conversationId, { t: now, type: 'backspace' });
     }
     
     setKeyPressCount(prev => prev + 1);
     setNewMessage(text);
+    setLastActivityTs(now);
 
     if (thinkingPauseTimeout.current) clearTimeout(thinkingPauseTimeout.current);
     thinkingPauseTimeout.current = setTimeout(() => {
       setThinkingPauses(prev => prev + 1);
+      // Consider user idle after a pause
+      setIsTyping(false);
+  SessionInsightsService.record(conversationId, { t: Date.now(), type: 'pause' });
     }, 1500);
 
-    // Log typing telemetry
-    TelemetrySDK.getInstance().trackCustomEvent({
-      session_id: conversationId,
-      screen: 'chat',
-      etype: 'TYPE',
-      input_len: text.length,
-      meta: {
-        conversationId,
-        isBackspace: text.length < newMessage.length,
+    // Log typing telemetry to this chat's session
+    if (telemetrySessionId) {
+      TelemetrySDK.getInstance().logType({
+        sessionId: telemetrySessionId,
+        screen: 'ChatScreen',
+        input_len: text.length,
+        backspace: text.length < newMessage.length,
         key_code: text.length > newMessage.length ? 'character' : 'backspace',
-        backspaces: text.length < newMessage.length ? 1 : 0,
-        interval: lastKeystrokeTimestamp ? now - lastKeystrokeTimestamp : 0,
-      }
-    });
+        component_id: 'chat-message-input',
+      });
+    }
   };
 
   const handleScroll = (event: any) => {
     const now = Date.now();
     const currentOffset = event?.nativeEvent?.contentOffset?.y || 0;
+    let delta = 0;
     if (lastScrollTime.current > 0) {
       const timeDiff = now - lastScrollTime.current;
-      const offsetDiff = Math.abs(currentOffset - lastScrollOffset.current);
+      const offsetDiffRaw = currentOffset - lastScrollOffset.current;
+      const offsetDiff = Math.abs(offsetDiffRaw);
+      delta = offsetDiffRaw;
       if (timeDiff > 0) {
         const velocity = offsetDiff / timeDiff;
         setScrollAnalytics(prev => ({ ...prev, velocity }));
@@ -196,7 +338,10 @@ export const ChatScreen: React.FC = () => {
     if (hesitationTimeout.current) clearTimeout(hesitationTimeout.current);
     hesitationTimeout.current = setTimeout(() => {
       setScrollAnalytics(prev => ({ ...prev, velocity: 0, hesitations: prev.hesitations + 1 }));
+  SessionInsightsService.record(conversationId, { t: Date.now(), type: 'scroll', value: 0 });
     }, 300);
+
+  // TelemetryScrollView already logs scroll events with sessionIdOverride
   };
 
   const sendMessage = async () => {
@@ -232,6 +377,7 @@ export const ChatScreen: React.FC = () => {
       setIsTyping(false);
       setKeyPressCount(0);
       setBackspaceCount(0);
+  setLastActivityTs(Date.now());
       
       // Note: Auto-scroll functionality will need to be handled differently with TelemetryScrollView
     } catch (error) {
@@ -331,6 +477,12 @@ export const ChatScreen: React.FC = () => {
           }}
           style={styles.interestMeter}
         />
+        {behaviorState && (
+          <Text style={styles.stateBadge}>
+            {behaviorState.state === 'engaged' ? '🔥 Engaged' : behaviorState.state === 'hesitating' ? '🤔 Hesitating' : '🕳️ Disengaged'}
+            {` • ${(behaviorState.confidence * 100).toFixed(0)}%`}
+          </Text>
+        )}
       </View>
 
       {/* Chemistry trend */}
@@ -361,6 +513,7 @@ export const ChatScreen: React.FC = () => {
           style={styles.messagesList}
           contentContainerStyle={styles.messagesContent}
           componentId="chat-messages-scroll"
+          sessionIdOverride={telemetrySessionId || undefined}
           onScroll={handleScroll}
           showsVerticalScrollIndicator={false}
         >
@@ -385,6 +538,7 @@ export const ChatScreen: React.FC = () => {
             placeholder="Share your romantic thoughts... �"
             placeholderTextColor="#666"
             componentId="chat-message-input"
+            sessionIdOverride={telemetrySessionId || undefined}
             multiline
             maxLength={500}
           />
@@ -461,6 +615,12 @@ const styles = StyleSheet.create({
   width: '90%',
   maxWidth: 320,
   height: 60,
+  },
+  stateBadge: {
+    marginTop: 8,
+    color: '#FF6B9D',
+    fontSize: 12,
+    fontWeight: '600',
   },
   userName: {
     fontSize: 20,
