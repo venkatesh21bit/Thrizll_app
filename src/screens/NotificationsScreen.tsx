@@ -108,19 +108,19 @@ export const NotificationsScreen: React.FC = () => {
   const renderRequest = ({ item }: { item: ConnectionRequest }) => (
     <View style={styles.requestCard}>
       <Image 
-        source={{ uri: item.photos[0] || 'https://via.placeholder.com/70' }} 
+        source={{ uri: (item.photos && item.photos.length > 0 && item.photos[0]) || 'https://via.placeholder.com/70' }} 
         style={styles.avatar} 
       />
       
       <View style={styles.requestInfo}>
         <View style={styles.headerRow}>
-          <Text style={styles.name}>{item.name}, {item.age}</Text>
+          <Text style={styles.name}>{item.name}, {item.age || 'Unknown'}</Text>
           <Text style={styles.timeText}>
             {new Date(item.created_at).toLocaleDateString()}
           </Text>
         </View>
         
-        <Text style={styles.bio} numberOfLines={2}>{item.bio}</Text>
+        <Text style={styles.bio} numberOfLines={2}>{item.bio || 'No bio available'}</Text>
         
         {item.message && (
           <View style={styles.messageContainer}>
@@ -151,11 +151,11 @@ export const NotificationsScreen: React.FC = () => {
   const renderSentRequest = ({ item }: { item: ConnectionRequest }) => (
     <View style={styles.requestCard}>
       <View style={styles.requestContent}>
-        <Image source={{ uri: item.photos[0] || 'https://via.placeholder.com/60' }} style={styles.profileImage} />
+        <Image source={{ uri: (item.photos && item.photos.length > 0 && item.photos[0]) || 'https://via.placeholder.com/60' }} style={styles.profileImage} />
         <View style={styles.requestInfo}>
           <Text style={styles.requestName}>{item.name}</Text>
-          <Text style={styles.requestAge}>Age: {item.age}</Text>
-          <Text style={styles.requestMessage}>"{item.message}"</Text>
+          <Text style={styles.requestAge}>Age: {item.age || 'Unknown'}</Text>
+          <Text style={styles.requestMessage}>"{item.message || 'No message'}"</Text>
           <Text style={styles.requestTime}>{new Date(item.created_at).toLocaleDateString()}</Text>
         </View>
         <View style={styles.statusContainer}>

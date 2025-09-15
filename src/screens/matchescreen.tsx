@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { UserProfile } from '../types/user';
+import { UserProfile, Match } from '../types/user';
 import UserService from '../services/userservice';
 import { SessionManager } from '../services/SessionManager';
 
@@ -23,7 +23,7 @@ interface MatchWithProfile {
 }
 
 export const MatchesScreen: React.FC = () => {
-  const [matches, setMatches] = useState<MatchWithProfile[]>([]);
+  const [matches, setMatches] = useState<Match[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [currentUserHash, setCurrentUserHash] = useState<string>('');
   const navigation = useNavigation();
@@ -43,13 +43,8 @@ export const MatchesScreen: React.FC = () => {
     setIsLoading(true);
     try {
       const userMatches = await UserService.getMatches(userHash);
-      const mappedMatches: MatchWithProfile[] = userMatches.map((match: any) => ({
-        id: match.id,
-        user_profile: match.user_profile,
-        matched_at: match.matched_at,
-        is_new: match.is_new ?? false,
-      }));
-      setMatches(mappedMatches);
+      console.log('🎯 Raw matches data:', userMatches);
+      setMatches(userMatches);
     } catch (error) {
       console.error('Failed to load matches:', error);
       Alert.alert('Error', 'Failed to load your matches. Please try again.');
@@ -58,57 +53,40 @@ export const MatchesScreen: React.FC = () => {
     }
   };
 
-  const startChat = (match: MatchWithProfile) => {
+  const startChat = (match: Match) => {
     // Navigate to chat screen with the matched user
+    console.log('Starting chat with match:', match);
     (navigation as any).navigate('Chat', { 
-      conversationId: `${currentUserHash}_${match.user_profile.user_hash}`,
-      matchedUser: match.user_profile
+      conversationId: `${currentUserHash}_${match.matchedUserId}`,
+      chatPartnerId: match.matchedUserId,
+      chatPartnerName: match.user.name
     });
   };
 
-  const renderMatch = ({ item }: { item: MatchWithProfile }) => (
-    <TouchableOpacity
-      style={styles.matchCard}
-      onPress={() => startChat(item)}
-    >
-      <Image 
-        source={{ uri: item.user_profile.photos[0] || 'https://via.placeholder.com/70' }} 
-        style={styles.avatar} 
-      />
-      <View style={styles.matchInfo}>
-        <View style={styles.nameRow}>
-          <Text style={styles.name}>{item.user_profile.name}, {item.user_profile.age}</Text>
-          {item.is_new && <Text style={styles.newBadge}>NEW</Text>}
+  const renderMatch = ({ item }: { item: Match }) => {
+    // Simple template: just show the matched user's name and chat button
+    if (!item.user || !item.user.name) {
+      return (
+        <View style={styles.matchCard}>
+          <Text style={styles.errorText}>User data not available</Text>
         </View>
-        
-        <Text style={styles.bio} numberOfLines={2}>
-          {item.user_profile.bio}
-        </Text>
-        
-        <Text style={styles.matchDate}>
-          Matched {new Date(item.matched_at).toLocaleDateString()}
-        </Text>
-        
-        <View style={styles.interestsRow}>
-          {item.user_profile.interests.slice(0, 3).map((interest, index) => (
-            <View key={index} style={styles.interestTag}>
-              <Text style={styles.interestText}>{interest}</Text>
-            </View>
-          ))}
-          {item.user_profile.interests.length > 3 && (
-            <Text style={styles.moreInterests}>+{item.user_profile.interests.length - 3}</Text>
-          )}
+      );
+    }
+
+    return (
+      <View style={styles.matchCard}>
+        <View style={styles.matchInfo}>
+          <Text style={styles.name}>{item.user.name}</Text>
         </View>
-        
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.chatButton}
           onPress={() => startChat(item)}
         >
-          <Text style={styles.chatButtonText}>💬 Start Chat</Text>
+          <Text style={styles.chatButtonText}>💬 Chat</Text>
         </TouchableOpacity>
       </View>
-    </TouchableOpacity>
-  );
+    );
+  };
 
   const onRefresh = () => {
     if (currentUserHash) {
@@ -283,5 +261,11 @@ const styles = StyleSheet.create({
     color: '#B0B0B0',
     textAlign: 'center',
     lineHeight: 24,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#FF6B6B',
+    textAlign: 'center',
+    padding: 16,
   },
 });

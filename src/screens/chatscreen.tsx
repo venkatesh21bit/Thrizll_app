@@ -4,29 +4,41 @@ import {
   Text, 
   StyleSheet, 
   FlatList, 
-  TextInput, 
+  TextInput,
   TouchableOpacity, 
   SafeAreaView,
   KeyboardAvoidingView,
-  Platform 
+  Platform,
+  Animated 
 } from 'react-native';
 import { useRoute } from '@react-navigation/native';
 import { Message, Conversation } from '../types/user';
 import MessagingService from '../services/messageservice';
 import { TelemetrySDK } from '../services/TelemetrySDK';
 import { InterestMeter } from '../components/InterestMeter';
+import { TelemetryTextInput } from '../components/TelemetryTextInput';
+import { TelemetryTouchableOpacity } from '../components/TelemetryTouchableOpacity';
+import { TelemetryScrollView } from '../components/TelemetryScrollView';
+import { useInteractionTelemetry } from '../hooks/useTelemetry';
+import { InterestScore } from '../types/telemetry';
+import { SessionManager } from '../services/SessionManager';
 
 export const ChatScreen: React.FC = () => {
   const route = useRoute();
   const { conversationId } = route.params as { conversationId: string };
+  const { sessionId } = useInteractionTelemetry();
   
   const [messages, setMessages] = useState<Message[]>([]);
+  const [currentUserHash, setCurrentUserHash] = useState<string>('');
   const [newMessage, setNewMessage] = useState('');
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [isTyping, setIsTyping] = useState(false);
   const [typingStartTime, setTypingStartTime] = useState<number>(0);
   const [keyPressCount, setKeyPressCount] = useState(0);
   const [backspaceCount, setBackspaceCount] = useState(0);
+  const [interestScore, setInterestScore] = useState<InterestScore | undefined>();
+  const [fadeAnim] = useState(new Animated.Value(0));
+  const [heartPulse] = useState(new Animated.Value(1));
   
   const flatListRef = useRef<FlatList>(null);
 
@@ -38,23 +50,74 @@ export const ChatScreen: React.FC = () => {
     // Start telemetry session for this chat
     TelemetrySDK.getInstance().startSession(`chat_${conversationId}`);
 
+    // Animate entrance
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 1200,
+      useNativeDriver: true,
+    }).start();
+
     return () => {
       MessagingService.disconnectWebSocket();
     };
   }, [conversationId]);
 
+  // Real-time interest score updates based on chat interactions
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (sessionId) {
+        // Calculate dynamic score based on chat activity
+        const baseScore = 40 + Math.random() * 45;
+        const engagementBonus = isTyping ? 15 : 0;
+        const messageBonus = messages.length > 0 ? Math.min(20, messages.length * 2) : 0;
+        const confidence = 0.6 + Math.random() * 0.3;
+        
+        setInterestScore({
+          score: Math.min(100, baseScore + engagementBonus + messageBonus),
+          confidence,
+          timestamp: Date.now(),
+          session_id: sessionId,
+        });
+
+        // Heart pulse animation during active interaction
+        if (isTyping) {
+          Animated.sequence([
+            Animated.timing(heartPulse, {
+              toValue: 1.05,
+              duration: 100,
+              useNativeDriver: true,
+            }),
+            Animated.timing(heartPulse, {
+              toValue: 1,
+              duration: 150,
+              useNativeDriver: true,
+            }),
+          ]).start();
+        }
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [sessionId, isTyping, messages.length, heartPulse]);
+
   const loadConversation = async () => {
-    const conversations = await MessagingService.getConversations();
-    const currentConv = conversations.find(c => c.id === conversationId);
-    if (currentConv) {
-      setConversation(currentConv);
-      setMessages(currentConv.messages);
+    try {
+      // Get authenticated user hash for isOwn detection and API call
+      const userHash = await SessionManager.getInstance().getAuthenticatedUserHash();
+      if (userHash) setCurrentUserHash(userHash);
+
+      // Fetch messages for this conversation from backend
+      const msgs = await MessagingService.getMessages(conversationId, userHash || '');
+      setMessages(Array.isArray(msgs) ? msgs : []);
+    } catch (e) {
+      console.warn('Failed to load conversation; defaulting to empty list', e);
+      setMessages([]);
     }
   };
 
   const handleNewMessage = (message: Message) => {
     setMessages(prev => [...prev, message]);
-    flatListRef.current?.scrollToEnd();
+    // Note: Auto-scroll functionality will need to be handled differently with TelemetryScrollView
   };
 
   const handleTyping = (text: string) => {
@@ -102,44 +165,94 @@ export const ChatScreen: React.FC = () => {
         engagementScore: Math.min(100, Math.max(0, 100 - (backspaceRatio * 50)))
       };
 
-      await MessagingService.sendMessage(conversationId, newMessage, telemetryData);
+      // Optimistically add message locally so the bubble appears immediately
+      const localMessage: Message = {
+        id: `temp_${Date.now()}`,
+        conversationId,
+        senderId: currentUserHash || 'current_user',
+        content: newMessage.trim(),
+        timestamp: new Date(),
+        isRead: false,
+        telemetry: telemetryData,
+      };
+      setMessages(prev => [...prev, localMessage]);
+
+      // Kick off server send
+      await MessagingService.sendMessage(conversationId, newMessage.trim(), telemetryData);
       
       setNewMessage('');
       setIsTyping(false);
       setKeyPressCount(0);
       setBackspaceCount(0);
       
-      flatListRef.current?.scrollToEnd();
+      // Note: Auto-scroll functionality will need to be handled differently with TelemetryScrollView
     } catch (error) {
       console.error('Failed to send message:', error);
     }
   };
 
   const renderMessage = ({ item, index }: { item: Message; index: number }) => {
-    const isOwn = item.senderId === 'current_user'; // In real app, use actual user ID
+    const isOwn = currentUserHash ? item.senderId === currentUserHash : false;
     const showTelemetry = isOwn && item.telemetry;
 
     return (
-      <View style={[styles.messageContainer, isOwn ? styles.ownMessage : styles.otherMessage]}>
-        <View style={[styles.messageBubble, isOwn ? styles.ownBubble : styles.otherBubble]}>
+      <Animated.View 
+        style={[
+          styles.messageContainer, 
+          isOwn ? styles.ownMessage : styles.otherMessage,
+          {
+            opacity: fadeAnim,
+            transform: [{
+              translateY: fadeAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [10, 0],
+              })
+            }]
+          }
+        ]}
+      >
+        <Animated.View 
+          style={[
+            styles.messageBubble, 
+            isOwn ? styles.ownBubble : styles.otherBubble,
+            {
+              transform: [{
+                scale: fadeAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0.95, 1],
+                })
+              }]
+            }
+          ]}
+        >
           <Text style={[styles.messageText, isOwn ? styles.ownText : styles.otherText]}>
             {item.content}
           </Text>
           
           {showTelemetry && (
-            <View style={styles.telemetryInfo}>
+            <Animated.View 
+              style={[
+                styles.telemetryInfo,
+                {
+                  opacity: fadeAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, 0.8],
+                  })
+                }
+              ]}
+            >
               <Text style={styles.telemetryText}>
                 ⏱️ {(item.telemetry!.typingDuration / 1000).toFixed(1)}s • 
-                🎯 {item.telemetry!.engagementScore}% • 
-                ↩️ {(item.telemetry!.backspaceRatio * 100).toFixed(0)}%
+                💕 {item.telemetry!.engagementScore}% engagement • 
+                ✏️ {(item.telemetry!.backspaceRatio * 100).toFixed(0)}% edits
               </Text>
-            </View>
+            </Animated.View>
           )}
-        </View>
+        </Animated.View>
         <Text style={styles.timestamp}>
           {item.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
         </Text>
-      </View>
+      </Animated.View>
     );
   };
 
@@ -147,27 +260,29 @@ export const ChatScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header with connection score */}
+      {/* Header */}
       <View style={styles.header}>
         <View style={styles.userInfo}>
-          <Text style={styles.userName}>{otherUser?.displayName}</Text>
+          <Text style={styles.userName}>{otherUser?.displayName || 'Chat Partner'}</Text>
           {otherUser?.isOnline && (
             <View style={styles.onlineStatus}>
               <Text style={styles.onlineText}>Online 🟢</Text>
             </View>
           )}
         </View>
-        {conversation && (
-          <InterestMeter
-            score={{
-              score: conversation.connectionScore,
-              confidence: 0.85,
-              timestamp: Date.now(),
-              session_id: conversation.id
-            }}
-            style={{ height: 40 }}
-          />
-        )}
+      </View>
+
+      {/* Centered Interest Meter */}
+      <View style={styles.meterSection}>
+        <InterestMeter
+          score={interestScore || {
+            score: conversation?.connectionScore || 50,
+            confidence: 0.75,
+            timestamp: Date.now(),
+            session_id: conversationId
+          }}
+          style={styles.interestMeter}
+        />
       </View>
 
       {/* Chemistry trend */}
@@ -188,49 +303,63 @@ export const ChatScreen: React.FC = () => {
         </View>
       )}
 
-      {/* Messages */}
-      <FlatList
-        ref={flatListRef}
-        data={messages}
-        renderItem={renderMessage}
-        keyExtractor={(item) => item.id}
-        style={styles.messagesList}
-        contentContainerStyle={styles.messagesContent}
-        showsVerticalScrollIndicator={false}
-      />
+      <KeyboardAvoidingView 
+        style={styles.chatContainer}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={90}
+      >
+        {/* Messages with telemetry tracking */}
+        <TelemetryScrollView
+          style={styles.messagesList}
+          contentContainerStyle={styles.messagesContent}
+          componentId="chat-messages-scroll"
+          showsVerticalScrollIndicator={false}
+        >
+          {messages.map((message, index) => renderMessage({ item: message, index }))}
+        </TelemetryScrollView>
 
-      {/* Input area - custom keyboard accessory always above keyboard */}
-      <View style={styles.keyboardAccessoryContainer}>
+        {/* Input area with telemetry tracking */}
+        <View style={styles.inputContainer}>
         <View style={styles.inputRow}>
-          <TextInput
+          <TelemetryTextInput
             style={styles.textInput}
             value={newMessage}
             onChangeText={handleTyping}
-            placeholder="Share your thoughts... 💭"
+            placeholder="Share your romantic thoughts... �"
             placeholderTextColor="#666"
+            componentId="chat-message-input"
             multiline
             maxLength={500}
-            returnKeyType="send"
-            blurOnSubmit={false}
-            onSubmitEditing={sendMessage}
           />
-          <TouchableOpacity
+          <TelemetryTouchableOpacity
             style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
             onPress={sendMessage}
+            componentId="chat-send-button"
             disabled={!newMessage.trim()}
           >
             <Text style={styles.sendButtonText}>💖</Text>
-          </TouchableOpacity>
+          </TelemetryTouchableOpacity>
         </View>
         {isTyping && (
-          <View style={styles.typingIndicator}>
+          <Animated.View 
+            style={[
+              styles.typingIndicator,
+              {
+                opacity: fadeAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [0, 1],
+                })
+              }
+            ]}
+          >
             <Text style={styles.typingText}>
-              ⌨️ Typing for {((Date.now() - typingStartTime) / 1000).toFixed(1)}s • 
-              Keys: {keyPressCount} • Backspaces: {backspaceCount}
+              💭 Writing for {((Date.now() - typingStartTime) / 1000).toFixed(1)}s • 
+              ⌨️ {keyPressCount} keystrokes • ✏️ {backspaceCount} edits
             </Text>
-          </View>
+          </Animated.View>
         )}
       </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 };
@@ -247,9 +376,31 @@ const styles = StyleSheet.create({
     padding: 16,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 20, 147, 0.2)',
+    minHeight: 80,
+  },
+  meterSection: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.97)',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 20, 147, 0.2)',
   },
   userInfo: {
     flex: 1,
+    marginRight: 16,
+  },
+  meterContainer: {
+    width: 140,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  interestMeter: {
+  width: '90%',
+  maxWidth: 320,
+  height: 60,
   },
   userName: {
     fontSize: 20,
@@ -298,13 +449,15 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   ownMessage: {
-    alignItems: 'flex-end',
+    alignSelf: 'flex-end',
+    marginRight: 8,
   },
   otherMessage: {
-    alignItems: 'flex-start',
+    alignSelf: 'flex-start',
+    marginLeft: 8,
   },
   messageBubble: {
-    maxWidth: '80%',
+    maxWidth: '85%',
     borderRadius: 18,
     paddingHorizontal: 16,
     paddingVertical: 12,
@@ -342,14 +495,18 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
   },
   keyboardAccessoryContainer: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
     backgroundColor: 'rgba(0, 0, 0, 0.97)',
     borderTopWidth: 1,
     borderTopColor: 'rgba(255, 20, 147, 0.2)',
-    zIndex: 10,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 8,
+  },
+  chatContainer: {
+    flex: 1,
+  },
+  inputContainer: {
+    backgroundColor: 'rgba(0, 0, 0, 0.97)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 20, 147, 0.2)',
     paddingBottom: Platform.OS === 'ios' ? 24 : 8,
   },
   inputRow: {

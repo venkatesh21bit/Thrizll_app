@@ -1,8 +1,3 @@
-
-
-
-
-
 # ...existing code...
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Depends, Body
@@ -1171,6 +1166,374 @@ async def record_swipe(swipe_data: dict, db: Session = Depends(get_db)):
         db.rollback()
         logger.error(f"❌ Error recording swipe: {e}")
         raise HTTPException(status_code=500, detail="Failed to record swipe")
+
+# Messaging System Models
+class MessageRequest(BaseModel):
+    from_user_hash: str
+    to_user_hash: str
+    content: str
+    message_type: str = "text"
+
+class ConversationResponse(BaseModel):
+    id: str
+    participants: List[str]
+    last_message: Optional[str] = None
+    last_message_time: Optional[datetime] = None
+    unread_count: int = 0
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, user_hash: str):
+        await websocket.accept()
+        self.active_connections[user_hash] = websocket
+        logger.info(f"📱 User {user_hash} connected to chat WebSocket")
+
+    def disconnect(self, user_hash: str):
+        if user_hash in self.active_connections:
+            del self.active_connections[user_hash]
+            logger.info(f"📱 User {user_hash} disconnected from chat WebSocket")
+
+    async def send_personal_message(self, message: str, user_hash: str):
+        if user_hash in self.active_connections:
+            try:
+                await self.active_connections[user_hash].send_text(message)
+                return True
+            except Exception as e:
+                logger.error(f"Error sending message to {user_hash}: {e}")
+                self.disconnect(user_hash)
+                return False
+        return False
+
+manager = ConnectionManager()
+
+# Messaging Endpoints
+@app.post("/api/v1/messages")
+async def send_message(message: MessageRequest, db: Session = Depends(get_db)):
+    """Send a message between matched users"""
+    try:
+        logger.info(f"💬 Sending message: {message.from_user_hash} → {message.to_user_hash}")
+        
+        # Create messages table if it doesn't exist
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS messages (
+                id VARCHAR PRIMARY KEY,
+                conversation_id VARCHAR NOT NULL,
+                sender_hash VARCHAR NOT NULL,
+                receiver_hash VARCHAR NOT NULL,
+                content TEXT NOT NULL,
+                message_type VARCHAR DEFAULT 'text',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                read_at TIMESTAMP NULL
+            )
+        '''))
+        
+        # Create conversations table if it doesn't exist
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS conversations (
+                id VARCHAR PRIMARY KEY,
+                participant1_hash VARCHAR NOT NULL,
+                participant2_hash VARCHAR NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_message_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(participant1_hash, participant2_hash)
+            )
+        '''))
+        
+        # Verify users are matched
+        match_check = db.execute(text('''
+            SELECT id FROM matches 
+            WHERE (user1_hash = :user1 AND user2_hash = :user2) 
+               OR (user1_hash = :user2 AND user2_hash = :user1)
+        '''), {
+            "user1": message.from_user_hash,
+            "user2": message.to_user_hash
+        }).fetchone()
+        
+        if not match_check:
+            logger.warning(f"⚠️ No match found between {message.from_user_hash} and {message.to_user_hash}")
+            raise HTTPException(status_code=403, detail="You can only message matched users")
+        
+        # Create conversation ID (consistent ordering)
+        conversation_participants = sorted([message.from_user_hash, message.to_user_hash])
+        conversation_id = hashlib.sha256(f"{conversation_participants[0]}_{conversation_participants[1]}".encode()).hexdigest()[:16]
+        
+        # Create conversation if it doesn't exist
+        db.execute(text('''
+            INSERT OR IGNORE INTO conversations (id, participant1_hash, participant2_hash, last_message_at)
+            VALUES (:id, :p1, :p2, CURRENT_TIMESTAMP)
+        '''), {
+            "id": conversation_id,
+            "p1": conversation_participants[0],
+            "p2": conversation_participants[1]
+        })
+        
+        # Create message
+        message_id = hashlib.sha256(f"{message.from_user_hash}_{message.to_user_hash}_{message.content}_{datetime.utcnow()}".encode()).hexdigest()[:16]
+        
+        db.execute(text('''
+            INSERT INTO messages (id, conversation_id, sender_hash, receiver_hash, content, message_type)
+            VALUES (:id, :conv_id, :sender, :receiver, :content, :type)
+        '''), {
+            "id": message_id,
+            "conv_id": conversation_id,
+            "sender": message.from_user_hash,
+            "receiver": message.to_user_hash,
+            "content": message.content,
+            "type": message.message_type
+        })
+        
+        # Update conversation last_message_at
+        db.execute(text('''
+            UPDATE conversations 
+            SET last_message_at = CURRENT_TIMESTAMP 
+            WHERE id = :conv_id
+        '''), {"conv_id": conversation_id})
+        
+        db.commit()
+        
+        # Send real-time notification via WebSocket
+        message_data = {
+            "id": message_id,
+            "conversation_id": conversation_id,
+            "sender_hash": message.from_user_hash,
+            "receiver_hash": message.to_user_hash,
+            "content": message.content,
+            "message_type": message.message_type,
+            "created_at": datetime.utcnow().isoformat()
+        }
+        
+        # Send to receiver if they're connected
+        await manager.send_personal_message(json.dumps(message_data), message.to_user_hash)
+        
+        logger.info(f"✅ Message sent successfully: {message_id}")
+        return {"success": True, "message_id": message_id, "conversation_id": conversation_id}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Error sending message: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send message")
+
+@app.get("/api/v1/messages/{conversation_id}")
+async def get_messages(conversation_id: str, user_hash: str, db: Session = Depends(get_db)):
+    """Get messages for a conversation"""
+    try:
+        logger.info(f"📨 Getting messages for conversation {conversation_id}, user {user_hash}")
+        
+        # Extract participant hashes from the conversation_id string
+        user_hashes = conversation_id.split('_')
+        if len(user_hashes) != 2:
+            raise HTTPException(status_code=400, detail="Invalid conversation ID format")
+        
+        participant1_hash, participant2_hash = sorted(user_hashes)
+
+        # Find the canonical conversation ID from the database
+        db_conversation_id = db.execute(text('''
+            SELECT id FROM conversations 
+            WHERE participant1_hash = :p1 AND participant2_hash = :p2
+        '''), {
+            "p1": participant1_hash,
+            "p2": participant2_hash
+        }).scalar()
+
+        if not db_conversation_id:
+            # If no conversation exists, return an empty list, which is a valid scenario
+            logger.warning(f"Conversation not found for participants {participant1_hash} and {participant2_hash}. Returning empty list.")
+            return []
+
+        # Verify the requesting user is part of this conversation
+        if user_hash not in user_hashes:
+            raise HTTPException(status_code=403, detail="User not part of this conversation")
+        
+        # Get messages using the canonical ID
+        messages = db.execute(text('''
+            SELECT id, sender_hash, receiver_hash, content, message_type, created_at, read_at
+            FROM messages 
+            WHERE conversation_id = :conv_id 
+            ORDER BY created_at ASC
+        '''), {"conv_id": db_conversation_id}).fetchall()
+        
+        logger.info(f"✅ Found {len(messages)} messages for conversation {db_conversation_id}")
+        
+        return [dict(row._mapping) for row in messages]
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Error getting messages for conversation {conversation_id}: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.get("/api/v1/conversations", response_model=List[ConversationResponse])
+async def get_conversations(user_hash: str, db: Session = Depends(get_db)):
+    """
+    Get all conversations for a user, including the latest message and participants' details.
+    """
+    try:
+        logger.info(f"🔍 Fetching conversations for user {user_hash}")
+        
+        # This query is complex. It joins conversations, messages, and users tables.
+        # It uses a subquery with ROW_NUMBER() to get only the latest message for each conversation.
+        conversations_query = text("""
+            WITH LatestMessages AS (
+                SELECT
+                    m.conversation_id,
+                    m.content,
+                    m.created_at,
+                    ROW_NUMBER() OVER(PARTITION BY m.conversation_id ORDER BY m.created_at DESC) as rn
+                FROM messages m
+            )
+            SELECT
+                c.id as conversation_id,
+                c.participant1_hash,
+                c.participant2_hash,
+                u1.name as participant1_name,
+                u2.name as participant2_name,
+                u1.photos as participant1_photos,
+                u2.photos as participant2_photos,
+                lm.content as last_message_content,
+                c.last_message_at
+            FROM conversations c
+            JOIN users u1 ON c.participant1_hash = u1.user_hash
+            JOIN users u2 ON c.participant2_hash = u2.user_hash
+            LEFT JOIN LatestMessages lm ON c.id = lm.conversation_id AND lm.rn = 1
+            WHERE c.participant1_hash = :user_hash OR c.participant2_hash = :user_hash
+            ORDER BY c.last_message_at DESC
+        """)
+        
+        results = db.execute(conversations_query, {"user_hash": user_hash}).fetchall()
+        
+        response_data = []
+        for row in results:
+            other_participant_hash = row.participant2_hash if row.participant1_hash == user_hash else row.participant1_hash
+            other_participant_name = row.participant2_name if row.participant1_hash == user_hash else row.participant1_name
+            other_participant_photos = row.participant2_photos if row.participant1_hash == user_hash else row.participant1_photos
+            
+            # Safely parse photos
+            try:
+                photos = json.loads(other_participant_photos) if other_participant_photos else []
+            except (json.JSONDecodeError, TypeError):
+                photos = []
+
+            response_data.append({
+                "id": f"{row.participant1_hash}_{row.participant2_hash}", # Use frontend-compatible ID
+                "other_user": {
+                    "user_hash": other_participant_hash,
+                    "name": other_participant_name,
+                    "photos": photos
+                },
+                "last_message": {
+                    "content": row.last_message_content or "No messages yet.",
+                    "timestamp": row.last_message_at.isoformat() if row.last_message_at else None
+                }
+            })
+            
+        logger.info(f"✅ Found {len(response_data)} conversations for user {user_hash}")
+        return response_data
+
+    except Exception as e:
+        logger.error(f"❌ Error fetching conversations for user {user_hash}: {e}")
+        # It's better to return an empty list than to crash the app
+        return []
+
+@app.websocket("/ws/chat/{conversation_id}")
+async def websocket_chat(websocket: WebSocket, conversation_id: str, db: Session = Depends(get_db)):
+    """WebSocket endpoint for real-time chat"""
+    try:
+        logger.info(f"🔗 WebSocket connection attempt for conversation: {conversation_id}")
+        
+        # For the conversation_id format like "user1_user2", we need to determine which user is connecting
+        # We'll handle authentication through WebSocket messages instead
+        await websocket.accept()
+        
+        # Wait for authentication message from client
+        try:
+            auth_data = await websocket.receive_text()
+            auth_message = json.loads(auth_data)
+            
+            if auth_message.get("type") != "auth":
+                await websocket.close(code=1008, reason="Authentication required")
+                return
+                
+            user_hash = auth_message.get("user_hash")
+            if not user_hash:
+                await websocket.close(code=1008, reason="User hash required")
+                return
+                
+            logger.info(f"🔐 WebSocket authentication: user={user_hash}, conversation={conversation_id}")
+            
+            # Verify user exists
+            user = db.execute(text('''
+                SELECT user_hash FROM users WHERE user_hash = :hash AND is_active = 1
+            '''), {"hash": user_hash}).fetchone()
+            
+            if not user:
+                logger.warning(f"❌ User not found: {user_hash}")
+                await websocket.close(code=1008, reason="User not found")
+                return
+            
+            # Verify user is part of this conversation by checking if they're matched
+            # Parse conversation_id to get the two user hashes
+            if "_" in conversation_id:
+                parts = conversation_id.split("_")
+                if len(parts) == 2:
+                    user1_hash, user2_hash = parts
+                    if user_hash not in [user1_hash, user2_hash]:
+                        logger.warning(f"❌ User {user_hash} not part of conversation {conversation_id}")
+                        await websocket.close(code=1008, reason="Not part of this conversation")
+                        return
+                        
+                    # Verify these users are actually matched
+                    match_check = db.execute(text('''
+                        SELECT id FROM matches 
+                        WHERE (user1_hash = :u1 AND user2_hash = :u2) 
+                           OR (user1_hash = :u2 AND user2_hash = :u1)
+                    '''), {"u1": user1_hash, "u2": user2_hash}).fetchone()
+                    
+                    if not match_check:
+                        logger.warning(f"❌ No match found between users in conversation {conversation_id}")
+                        await websocket.close(code=1008, reason="Users are not matched")
+                        return
+            
+            # Add to connection manager
+            manager.active_connections[user_hash] = websocket
+            logger.info(f"✅ WebSocket authenticated and connected: {user_hash}")
+            
+            # Send confirmation
+            await websocket.send_text(json.dumps({"type": "auth_success", "user_hash": user_hash}))
+            
+        except json.JSONDecodeError:
+            await websocket.close(code=1008, reason="Invalid authentication message")
+            return
+        except Exception as e:
+            logger.error(f"❌ Authentication error: {e}")
+            await websocket.close(code=1008, reason="Authentication failed")
+            return
+        
+        try:
+            while True:
+                # Keep connection alive and handle any incoming messages
+                data = await websocket.receive_text()
+                logger.info(f"💬 WebSocket message from {user_hash}: {data}")
+                
+                # Parse incoming message (could be ping/pong or message events)
+                try:
+                    message_data = json.loads(data)
+                    if message_data.get("type") == "ping":
+                        await websocket.send_text(json.dumps({"type": "pong"}))
+                except json.JSONDecodeError:
+                    logger.warning(f"Invalid JSON from {user_hash}: {data}")
+                    
+        except WebSocketDisconnect:
+            manager.disconnect(user_hash)
+            logger.info(f"📱 User {user_hash} disconnected from WebSocket")
+            
+    except Exception as e:
+        logger.error(f"❌ WebSocket error for {user_hash}: {e}")
+        manager.disconnect(user_hash)
 
 if __name__ == "__main__":
     import uvicorn

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,6 +6,7 @@ import {
   StatusBar,
   Animated,
 } from 'react-native';
+import LottieView from 'lottie-react-native';
 import { useInteractionTelemetry } from '../hooks/useTelemetry';
 import { TelemetryScrollView } from '../components/TelemetryScrollView';
 import { TelemetryTextInput } from '../components/TelemetryTextInput';
@@ -24,6 +25,17 @@ export const DemoScreen: React.FC = () => {
   ]);
   const [fadeAnim] = useState(new Animated.Value(0));
   const [heartPulse] = useState(new Animated.Value(1));
+  const [isTyping, setIsTyping] = useState(false);
+  const [typingStartTime, setTypingStartTime] = useState(0);
+  const [lastKeystrokeTimestamp, setLastKeystrokeTimestamp] = useState(0);
+  const [keystrokeIntervals, setKeystrokeIntervals] = useState<number[]>([]);
+  const [backspaceCount, setBackspaceCount] = useState(0);
+  const [thinkingPauses, setThinkingPauses] = useState(0);
+  const thinkingPauseTimeout = useRef<NodeJS.Timeout | null>(null);
+  const [scrollAnalytics, setScrollAnalytics] = useState({ velocity: 0, hesitations: 0 });
+  const lastScrollTime = useRef(0);
+  const lastScrollOffset = useRef(0);
+  const hesitationTimeout = useRef<NodeJS.Timeout | null>(null);
 
   // Animate entrance
   useEffect(() => {
@@ -40,10 +52,13 @@ export const DemoScreen: React.FC = () => {
       if (sessionId) {
         // More dynamic scoring based on romantic engagement
         const baseScore = 30 + Math.random() * 55;
+        const typingBonus = isTyping ? 15 : 0;
+        const engagementBonus = (thinkingPauses * 5) + (keystrokeIntervals.length * 0.1) - (backspaceCount * 2);
+        const scrollBonus = (scrollAnalytics.velocity * 5) - (scrollAnalytics.hesitations * 3);
         const confidence = 0.5 + Math.random() * 0.4;
         
         setInterestScore({
-          score: baseScore,
+          score: Math.min(100, Math.max(0, baseScore + typingBonus + engagementBonus + scrollBonus)),
           confidence,
           timestamp: Date.now(),
           session_id: sessionId,
@@ -66,13 +81,73 @@ export const DemoScreen: React.FC = () => {
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [sessionId, heartPulse]);
+  }, [sessionId, heartPulse, isTyping, thinkingPauses, keystrokeIntervals, backspaceCount, scrollAnalytics]);
+
+  const handleTyping = (text: string) => {
+    const now = Date.now();
+    if (!isTyping) {
+      setIsTyping(true);
+      setTypingStartTime(now);
+      setLastKeystrokeTimestamp(now);
+      setKeystrokeIntervals([]);
+      setBackspaceCount(0);
+      setThinkingPauses(0);
+    }
+
+    if (lastKeystrokeTimestamp) {
+      const interval = now - lastKeystrokeTimestamp;
+      setKeystrokeIntervals(prev => [...prev, interval]);
+    }
+    setLastKeystrokeTimestamp(now);
+
+    if (text.length < messageText.length) {
+      setBackspaceCount(prev => prev + 1);
+    }
+
+    setMessageText(text);
+
+    if (thinkingPauseTimeout.current) {
+      clearTimeout(thinkingPauseTimeout.current);
+    }
+    thinkingPauseTimeout.current = setTimeout(() => {
+      setThinkingPauses(prev => prev + 1);
+    }, 1500); // 1.5 second pause
+  };
 
   const handleSendMessage = () => {
     if (messageText.trim()) {
       setMessages(prev => [...prev, `💌 ${messageText}`]);
       setMessageText('');
+      setIsTyping(false);
+      if (thinkingPauseTimeout.current) {
+        clearTimeout(thinkingPauseTimeout.current);
+      }
     }
+  };
+
+  const handleScroll = (event: any) => {
+    const now = Date.now();
+    const currentOffset = event.nativeEvent.contentOffset.y;
+
+    if (lastScrollTime.current > 0) {
+      const timeDiff = now - lastScrollTime.current;
+      const offsetDiff = Math.abs(currentOffset - lastScrollOffset.current);
+      if (timeDiff > 0) {
+        const velocity = offsetDiff / timeDiff;
+        setScrollAnalytics(prev => ({ ...prev, velocity }));
+      }
+    }
+
+    lastScrollTime.current = now;
+    lastScrollOffset.current = currentOffset;
+
+    if (hesitationTimeout.current) {
+      clearTimeout(hesitationTimeout.current);
+    }
+
+    hesitationTimeout.current = setTimeout(() => {
+      setScrollAnalytics(prev => ({ ...prev, velocity: 0, hesitations: prev.hesitations + 1 }));
+    }, 300); // 300ms of no scrolling is a hesitation
   };
 
   const generateDemoContent = () => {
@@ -127,7 +202,15 @@ export const DemoScreen: React.FC = () => {
           style={styles.messagesContainer}
           componentId="romantic-chat-scroll"
           showsVerticalScrollIndicator={false}
+          onScroll={handleScroll}
+          scrollEventThrottle={16} // Fire event every 16ms for smooth velocity tracking
         >
+          <LottieView
+            source={require('../../assets/animations/butterflies.json')}
+            autoPlay
+            loop
+            style={styles.lottieButterfly}
+          />
           {generateDemoContent()}
           {messages.map((message, index) => (
             <Animated.View 
@@ -157,7 +240,7 @@ export const DemoScreen: React.FC = () => {
             placeholder="Share your romantic thoughts... 💕"
             placeholderTextColor="#666666"
             value={messageText}
-            onChangeText={setMessageText}
+            onChangeText={handleTyping}
             componentId="romantic-message-input"
             multiline
           />
@@ -177,6 +260,17 @@ export const DemoScreen: React.FC = () => {
           <Text style={styles.infoSubtext}>
             🔐 Your romantic patterns are being analyzed with complete privacy
           </Text>
+          <View style={styles.typingInfo}>
+            <Text style={styles.typingInfoText}>
+              {isTyping ? `Typing for ${((Date.now() - typingStartTime) / 1000).toFixed(1)}s...` : 'Idle'}
+            </Text>
+            <Text style={styles.typingInfoText}>
+              Pauses: {thinkingPauses} | Edits: {backspaceCount}
+            </Text>
+            <Text style={styles.typingInfoText}>
+              Scroll Velocity: {scrollAnalytics.velocity.toFixed(2)} | Hesitations: {scrollAnalytics.hesitations}
+            </Text>
+          </View>
         </View>
       </View>
     </View>
@@ -197,6 +291,14 @@ const styles = StyleSheet.create({
   meter: {
     marginTop: 10,
     marginHorizontal: 16,
+  },
+  lottieButterfly: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    opacity: 0.2,
   },
   messagesContainer: {
     flex: 1,
@@ -294,5 +396,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 4,
     fontWeight: '400',
+  },
+  typingInfo: {
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  typingInfoText: {
+    fontSize: 12,
+    color: '#888',
+    lineHeight: 18,
   },
 });
