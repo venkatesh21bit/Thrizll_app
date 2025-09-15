@@ -816,6 +816,20 @@ async def get_connection_requests(user_hash: str, db: Session = Depends(get_db))
     try:
         logger.info(f"🔍 Getting connection requests for user: {user_hash}")
         
+        # Create connection requests table if it doesn't exist
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS connection_requests (
+                id VARCHAR PRIMARY KEY,
+                from_user_hash VARCHAR NOT NULL,
+                to_user_hash VARCHAR NOT NULL,
+                message TEXT,
+                status VARCHAR DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                responded_at TIMESTAMP NULL,
+                UNIQUE(from_user_hash, to_user_hash)
+            )
+        '''))
+        
         requests = db.execute(text('''
             SELECT cr.id, cr.from_user_hash, cr.message, cr.created_at, u.name, u.photos, u.age, u.bio
             FROM connection_requests cr
@@ -851,6 +865,20 @@ async def get_sent_connection_requests(user_hash: str, db: Session = Depends(get
     try:
         logger.info(f"🔍 Getting sent connection requests for user: {user_hash}")
         
+        # Create connection requests table if it doesn't exist
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS connection_requests (
+                id VARCHAR PRIMARY KEY,
+                from_user_hash VARCHAR NOT NULL,
+                to_user_hash VARCHAR NOT NULL,
+                message TEXT,
+                status VARCHAR DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                responded_at TIMESTAMP NULL,
+                UNIQUE(from_user_hash, to_user_hash)
+            )
+        '''))
+        
         requests = db.execute(text('''
             SELECT cr.id, cr.to_user_hash, cr.message, cr.created_at, cr.status, u.name, u.photos, u.age, u.bio
             FROM connection_requests cr
@@ -885,6 +913,20 @@ async def get_sent_connection_requests(user_hash: str, db: Session = Depends(get
 async def respond_to_connection_request(response: ConnectionResponse, db: Session = Depends(get_db)):
     """Accept or decline a connection request"""
     try:
+        # Create connection_requests table if it doesn't exist
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS connection_requests (
+                id VARCHAR PRIMARY KEY,
+                from_user_hash VARCHAR NOT NULL,
+                to_user_hash VARCHAR NOT NULL,
+                message TEXT,
+                status VARCHAR DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                responded_at TIMESTAMP NULL,
+                UNIQUE(from_user_hash, to_user_hash)
+            )
+        '''))
+        
         # Update the connection request status
         db.execute(text('''
             UPDATE connection_requests 
@@ -986,7 +1028,7 @@ async def discover_users(user_hash: str, refresh: bool = False, db: Session = De
     try:
         logger.info(f"🔍 Discovering users for: {user_hash} (refresh={refresh})")
         
-        # Create swipes table if it doesn't exist
+        # Create tables if they don't exist
         db.execute(text('''
             CREATE TABLE IF NOT EXISTS swipes (
                 id VARCHAR PRIMARY KEY,
@@ -994,6 +1036,19 @@ async def discover_users(user_hash: str, refresh: bool = False, db: Session = De
                 to_user_hash VARCHAR NOT NULL,
                 action VARCHAR NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(from_user_hash, to_user_hash)
+            )
+        '''))
+        
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS connection_requests (
+                id VARCHAR PRIMARY KEY,
+                from_user_hash VARCHAR NOT NULL,
+                to_user_hash VARCHAR NOT NULL,
+                message TEXT,
+                status VARCHAR DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                responded_at TIMESTAMP NULL,
                 UNIQUE(from_user_hash, to_user_hash)
             )
         '''))
@@ -1079,6 +1134,31 @@ async def discover_users(user_hash: str, refresh: bool = False, db: Session = De
 async def debug_user_actions(user_hash: str, db: Session = Depends(get_db)):
     """Debug endpoint to check what actions a user has taken"""
     try:
+        # Create tables if they don't exist
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS swipes (
+                id VARCHAR PRIMARY KEY,
+                from_user_hash VARCHAR NOT NULL,
+                to_user_hash VARCHAR NOT NULL,
+                action VARCHAR NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(from_user_hash, to_user_hash)
+            )
+        '''))
+        
+        db.execute(text('''
+            CREATE TABLE IF NOT EXISTS connection_requests (
+                id VARCHAR PRIMARY KEY,
+                from_user_hash VARCHAR NOT NULL,
+                to_user_hash VARCHAR NOT NULL,
+                message TEXT,
+                status VARCHAR DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                responded_at TIMESTAMP NULL,
+                UNIQUE(from_user_hash, to_user_hash)
+            )
+        '''))
+        
         # Get all swipes by this user
         swipes = db.execute(text('''
             SELECT to_user_hash, action, created_at FROM swipes 
