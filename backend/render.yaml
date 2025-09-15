@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: thrizll-backend
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        value: postgresql://thrizll_user:YImqNQ1YXFPRHZXquTuUMF5iu6OKqxTD@dpg-d341fs6mcj7s73apn2a0-a/thrizll
+      - key: PYTHON_VERSION
+        value: 3.10.0

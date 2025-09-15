@@ -1,11 +1,17 @@
+import os
 from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.types import JSON
 
 # Database setup
-DATABASE_URL = "sqlite:///./telemetry.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if "sqlite" in DATABASE_URL else {})
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://thrizll_user:YImqNQ1YXFPRHZXquTuUMF5iu6OKqxTD@dpg-d341fs6mcj7s73apn2a0-a/thrizll")
+
+# For Render, DATABASE_URL might have postgres:// instead of postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 

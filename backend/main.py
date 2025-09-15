@@ -917,8 +917,9 @@ async def respond_to_connection_request(response: ConnectionResponse, db: Sessio
                 match_id = hashlib.sha256(f"{request_details.from_user_hash}_{request_details.to_user_hash}_match_{datetime.utcnow()}".encode()).hexdigest()[:16]
                 
                 db.execute(text('''
-                    INSERT OR IGNORE INTO matches (id, user1_hash, user2_hash)
+                    INSERT INTO matches (id, user1_hash, user2_hash)
                     VALUES (:id, :user1, :user2)
+                    ON CONFLICT (user1_hash, user2_hash) DO NOTHING
                 '''), {
                     "id": match_id,
                     "user1": request_details.from_user_hash,
@@ -1150,8 +1151,11 @@ async def record_swipe(swipe_data: dict, db: Session = Depends(get_db)):
         swipe_id = hashlib.sha256(f"{from_user}_{to_user}_{action}_{datetime.utcnow()}".encode()).hexdigest()[:16]
         
         db.execute(text('''
-            INSERT OR REPLACE INTO swipes (id, from_user_hash, to_user_hash, action)
+            INSERT INTO swipes (id, from_user_hash, to_user_hash, action)
             VALUES (:id, :from_user, :to_user, :action)
+            ON CONFLICT (from_user_hash, to_user_hash) DO UPDATE SET
+                action = EXCLUDED.action,
+                id = EXCLUDED.id
         '''), {
             "id": swipe_id,
             "from_user": from_user,
@@ -1267,8 +1271,9 @@ async def send_message(message: MessageRequest, db: Session = Depends(get_db)):
         
         # Create conversation if it doesn't exist
         db.execute(text('''
-            INSERT OR IGNORE INTO conversations (id, participant1_hash, participant2_hash, last_message_at)
+            INSERT INTO conversations (id, participant1_hash, participant2_hash, last_message_at)
             VALUES (:id, :p1, :p2, CURRENT_TIMESTAMP)
+            ON CONFLICT (participant1_hash, participant2_hash) DO NOTHING
         '''), {
             "id": conversation_id,
             "p1": conversation_participants[0],
@@ -1379,7 +1384,7 @@ async def submit_reveal_answers(payload: RevealAnswers, db: Session = Depends(ge
         # Create table if not exists
         db.execute(text('''
             CREATE TABLE IF NOT EXISTS reveal_answers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 from_user_hash VARCHAR NOT NULL,
                 to_user_hash VARCHAR NOT NULL,
                 answers TEXT NOT NULL,

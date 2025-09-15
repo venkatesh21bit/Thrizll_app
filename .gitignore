@@ -3,6 +3,25 @@
 # dependencies
 node_modules/
 
+# Python virtual environments  
+.venv
+venv/
+env/
+ENV/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+
+
 # Expo
 .expo/
 dist/
