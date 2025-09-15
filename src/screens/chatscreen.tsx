@@ -11,6 +11,7 @@ import {
   Platform,
   Animated 
 } from 'react-native';
+import LottieView from 'lottie-react-native';
 import { useRoute } from '@react-navigation/native';
 import { Message, Conversation } from '../types/user';
 import MessagingService from '../services/messageservice';
@@ -39,6 +40,14 @@ export const ChatScreen: React.FC = () => {
   const [interestScore, setInterestScore] = useState<InterestScore | undefined>();
   const [fadeAnim] = useState(new Animated.Value(0));
   const [heartPulse] = useState(new Animated.Value(1));
+  const [lastKeystrokeTimestamp, setLastKeystrokeTimestamp] = useState(0);
+  const [keystrokeIntervals, setKeystrokeIntervals] = useState<number[]>([]);
+  const [thinkingPauses, setThinkingPauses] = useState(0);
+  const thinkingPauseTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [scrollAnalytics, setScrollAnalytics] = useState({ velocity: 0, hesitations: 0 });
+  const lastScrollTime = useRef(0);
+  const lastScrollOffset = useRef(0);
+  const hesitationTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const flatListRef = useRef<FlatList>(null);
 
@@ -59,6 +68,8 @@ export const ChatScreen: React.FC = () => {
 
     return () => {
       MessagingService.disconnectWebSocket();
+  if (thinkingPauseTimeout.current) clearTimeout(thinkingPauseTimeout.current);
+  if (hesitationTimeout.current) clearTimeout(hesitationTimeout.current);
     };
   }, [conversationId]);
 
@@ -121,12 +132,23 @@ export const ChatScreen: React.FC = () => {
   };
 
   const handleTyping = (text: string) => {
+    const now = Date.now();
     if (!isTyping) {
       setIsTyping(true);
-      setTypingStartTime(Date.now());
+      setTypingStartTime(now);
       setKeyPressCount(0);
       setBackspaceCount(0);
+      setKeystrokeIntervals([]);
+      setThinkingPauses(0);
+      setLastKeystrokeTimestamp(now);
     }
+
+    // Inter-keystroke interval
+    if (lastKeystrokeTimestamp) {
+      const interval = now - lastKeystrokeTimestamp;
+      setKeystrokeIntervals(prev => [...prev, interval]);
+    }
+    setLastKeystrokeTimestamp(now);
 
     // Detect backspace (text got shorter)
     if (text.length < newMessage.length) {
@@ -135,6 +157,11 @@ export const ChatScreen: React.FC = () => {
     
     setKeyPressCount(prev => prev + 1);
     setNewMessage(text);
+
+    if (thinkingPauseTimeout.current) clearTimeout(thinkingPauseTimeout.current);
+    thinkingPauseTimeout.current = setTimeout(() => {
+      setThinkingPauses(prev => prev + 1);
+    }, 1500);
 
     // Log typing telemetry
     TelemetrySDK.getInstance().trackCustomEvent({
@@ -146,9 +173,30 @@ export const ChatScreen: React.FC = () => {
         conversationId,
         isBackspace: text.length < newMessage.length,
         key_code: text.length > newMessage.length ? 'character' : 'backspace',
-        backspaces: text.length < newMessage.length ? 1 : 0
+        backspaces: text.length < newMessage.length ? 1 : 0,
+        interval: lastKeystrokeTimestamp ? now - lastKeystrokeTimestamp : 0,
       }
     });
+  };
+
+  const handleScroll = (event: any) => {
+    const now = Date.now();
+    const currentOffset = event?.nativeEvent?.contentOffset?.y || 0;
+    if (lastScrollTime.current > 0) {
+      const timeDiff = now - lastScrollTime.current;
+      const offsetDiff = Math.abs(currentOffset - lastScrollOffset.current);
+      if (timeDiff > 0) {
+        const velocity = offsetDiff / timeDiff;
+        setScrollAnalytics(prev => ({ ...prev, velocity }));
+      }
+    }
+    lastScrollTime.current = now;
+    lastScrollOffset.current = currentOffset;
+
+    if (hesitationTimeout.current) clearTimeout(hesitationTimeout.current);
+    hesitationTimeout.current = setTimeout(() => {
+      setScrollAnalytics(prev => ({ ...prev, velocity: 0, hesitations: prev.hesitations + 1 }));
+    }, 300);
   };
 
   const sendMessage = async () => {
@@ -313,8 +361,17 @@ export const ChatScreen: React.FC = () => {
           style={styles.messagesList}
           contentContainerStyle={styles.messagesContent}
           componentId="chat-messages-scroll"
+          onScroll={handleScroll}
           showsVerticalScrollIndicator={false}
         >
+          <View pointerEvents="none" style={styles.lottieButterfly}>
+            <LottieView
+              source={require('../../assets/animations/butterflies.json')}
+              autoPlay
+              loop
+              style={{ flex: 1 }}
+            />
+          </View>
           {messages.map((message, index) => renderMessage({ item: message, index }))}
         </TelemetryScrollView>
 
@@ -340,7 +397,7 @@ export const ChatScreen: React.FC = () => {
             <Text style={styles.sendButtonText}>💖</Text>
           </TelemetryTouchableOpacity>
         </View>
-        {isTyping && (
+        {(
           <Animated.View 
             style={[
               styles.typingIndicator,
@@ -353,8 +410,11 @@ export const ChatScreen: React.FC = () => {
             ]}
           >
             <Text style={styles.typingText}>
-              💭 Writing for {((Date.now() - typingStartTime) / 1000).toFixed(1)}s • 
+              💭 Writing for {isTyping ? ((Date.now() - typingStartTime) / 1000).toFixed(1) : '0.0'}s • 
               ⌨️ {keyPressCount} keystrokes • ✏️ {backspaceCount} edits
+            </Text>
+            <Text style={styles.typingText}>
+              Scroll Velocity: {scrollAnalytics.velocity.toFixed(2)} | Hesitations: {scrollAnalytics.hesitations}
             </Text>
           </Animated.View>
         )}
@@ -548,5 +608,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#666',
     fontStyle: 'italic',
+  },
+  lottieButterfly: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 180,
+    opacity: 0.12,
   },
 });
