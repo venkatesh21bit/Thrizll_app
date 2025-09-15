@@ -648,8 +648,8 @@ async def create_profile(profile_data: ProfileCreate, db: Session = Depends(get_
         # Insert new user (guest user for profile-only creation)
         db.execute(text('''
             INSERT INTO users 
-            (user_hash, name, age, bio, location, photos, interests, is_guest)
-            VALUES (:user_hash, :name, :age, :bio, :location, :photos, :interests, :is_guest)
+            (user_hash, name, age, bio, location, photos, interests, is_guest, created_at)
+            VALUES (:user_hash, :name, :age, :bio, :location, :photos, :interests, :is_guest, :created_at)
         '''), {
             "user_hash": user_hash,
             "name": profile_data.name,
@@ -658,7 +658,8 @@ async def create_profile(profile_data: ProfileCreate, db: Session = Depends(get_
             "location": profile_data.location,
             "photos": json.dumps(profile_data.photos),
             "interests": json.dumps(profile_data.interests),
-            "is_guest": True
+            "is_guest": True,
+            "created_at": datetime.utcnow()
         })
         
         db.commit()

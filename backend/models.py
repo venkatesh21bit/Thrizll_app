@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from sqlalchemy import create_engine, Column, String, Integer, Float, DateTime, Boolean
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -64,7 +65,7 @@ class DBUser(Base):
     location = Column(String, nullable=True)
     photos = Column(String, nullable=True)  # JSON string
     interests = Column(String, nullable=True)  # JSON string
-    created_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     is_active = Column(Boolean, default=True)
     is_guest = Column(Boolean, default=False)
 

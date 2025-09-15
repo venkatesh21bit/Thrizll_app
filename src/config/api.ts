@@ -1,28 +1,37 @@
 import { Platform } from 'react-native';
 
+// Environment configuration
+const ENVIRONMENT = 'production'; // Change to 'development' for local testing
+
+// URLs
+const PRODUCTION_URL = 'https://thrizll-app.onrender.com';
+const DEVELOPMENT_URL = 'http://localhost:8000';
+const DEVELOPMENT_IP = '10.108.24.197'; // Your computer's actual IP address
+
 // Function to determine the correct API base URL
 export const getApiBaseUrl = (): string => {
-  // If running on web, use localhost
-  if (Platform.OS === 'web') {
-    return 'http://localhost:8000';
+  if (ENVIRONMENT === 'production') {
+    return PRODUCTION_URL;
   }
   
-  // For development, you need to replace this with your computer's actual IP address
-  // To find your IP: Run 'ipconfig' in Command Prompt and look for IPv4 Address
-  // Common IP ranges: 192.168.x.x or 10.0.x.x
-  const DEVELOPMENT_IP = '10.108.24.197'; // Your computer's actual IP address
+  // Development mode
+  if (Platform.OS === 'web') {
+    return DEVELOPMENT_URL;
+  }
   
   return `http://${DEVELOPMENT_IP}:8000`;
 };
 
 // Function to determine the correct WebSocket URL
 export const getWebSocketUrl = (): string => {
-  // If running on web, use localhost
-  if (Platform.OS === 'web') {
-    return 'ws://localhost:8000';
+  if (ENVIRONMENT === 'production') {
+    return PRODUCTION_URL.replace('https://', 'wss://');
   }
   
-  const DEVELOPMENT_IP = '10.108.24.197'; // Your computer's actual IP address
+  // Development mode
+  if (Platform.OS === 'web') {
+    return DEVELOPMENT_URL.replace('http://', 'ws://');
+  }
   
   return `ws://${DEVELOPMENT_IP}:8000`;
 };
