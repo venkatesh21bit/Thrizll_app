@@ -1,0 +1,35 @@
+{
+  "version": 2,
+  "name": "thrizll-app",
+  "builds": [
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "web-build"
+      }
+    }
+  ],
+  "routes": [
+    {
+      "src": "/static/(.*)",
+      "headers": {
+        "cache-control": "public, immutable, max-age=31536000"
+      }
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "env": {
+    "EXPO_PUBLIC_API_URL": "https://thrizll-app.onrender.com",
+    "NODE_ENV": "production"
+  },
+  "build": {
+    "env": {
+      "EXPO_PUBLIC_API_URL": "https://thrizll-app.onrender.com",
+      "NODE_ENV": "production"
+    }
+  }
+}
