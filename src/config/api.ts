@@ -10,7 +10,7 @@ export const getApiBaseUrl = (): string => {
   // For development, you need to replace this with your computer's actual IP address
   // To find your IP: Run 'ipconfig' in Command Prompt and look for IPv4 Address
   // Common IP ranges: 192.168.x.x or 10.0.x.x
-  const DEVELOPMENT_IP = '10.95.235.197'; // Your computer's actual IP address
+  const DEVELOPMENT_IP = '10.108.24.197'; // Your computer's actual IP address
   
   return `http://${DEVELOPMENT_IP}:8000`;
 };
@@ -22,7 +22,7 @@ export const getWebSocketUrl = (): string => {
     return 'ws://localhost:8000';
   }
   
-  const DEVELOPMENT_IP = '172.26.226.197'; // Your computer's actual IP address
+  const DEVELOPMENT_IP = '10.108.24.197'; // Your computer's actual IP address
   
   return `ws://${DEVELOPMENT_IP}:8000`;
 };

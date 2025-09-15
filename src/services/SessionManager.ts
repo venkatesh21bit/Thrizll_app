@@ -16,6 +16,7 @@ export class SessionManager {
   private lastActivityTime: number = 0;
   private readonly IDLE_TIMEOUT = 30000; // 30 seconds
   private readonly SESSIONS_KEY = 'telemetry_sessions';
+  private readonly USER_HASH_KEY = 'authenticated_user_hash';
 
   static getInstance(): SessionManager {
     if (!SessionManager.instance) {
@@ -44,6 +45,45 @@ export class SessionManager {
     await this.persistSession();
 
     return sessionId;
+  }
+
+  async getCurrentUserHash(): Promise<string> {
+    // First try to get the authenticated user hash
+    const authenticatedUserHash = await this.getAuthenticatedUserHash();
+    if (authenticatedUserHash) {
+      return authenticatedUserHash;
+    }
+    
+    // Fallback to device-based hash for telemetry only
+    const userIdentity = UserIdentity.getInstance();
+    return await userIdentity.getUserHash();
+  }
+
+  async setAuthenticatedUserHash(userHash: string): Promise<void> {
+    try {
+      await AsyncStorage.setItem(this.USER_HASH_KEY, userHash);
+      console.log('✅ Authenticated user hash saved:', userHash);
+    } catch (error) {
+      console.error('❌ Failed to save authenticated user hash:', error);
+    }
+  }
+
+  async getAuthenticatedUserHash(): Promise<string | null> {
+    try {
+      return await AsyncStorage.getItem(this.USER_HASH_KEY);
+    } catch (error) {
+      console.error('❌ Failed to get authenticated user hash:', error);
+      return null;
+    }
+  }
+
+  async clearAuthenticatedUserHash(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(this.USER_HASH_KEY);
+      console.log('✅ Authenticated user hash cleared');
+    } catch (error) {
+      console.error('❌ Failed to clear authenticated user hash:', error);
+    }
   }
 
   async endSession(): Promise<void> {

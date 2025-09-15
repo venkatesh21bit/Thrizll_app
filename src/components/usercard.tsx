@@ -31,7 +31,7 @@ export const UserCard: React.FC<UserCardProps> = ({ user, onLike, onPass }) => {
   return (
     <View style={styles.card}>
       <ImageBackground
-        source={{ uri: user.photos[0] }}
+        source={{ uri: (user.photos && user.photos.length > 0 && user.photos[0]) || 'https://via.placeholder.com/400x600?text=No+Photo' }}
         style={styles.backgroundImage}
         imageStyle={styles.image}
       >
@@ -92,11 +92,14 @@ export const UserCard: React.FC<UserCardProps> = ({ user, onLike, onPass }) => {
             <View style={styles.interestsSection}>
               <Text style={styles.interestsTitle}>✨ Interests</Text>
               <View style={styles.interestsContainer}>
-                {user.interests.slice(0, 3).map((interest, index) => (
+                {(user.interests && user.interests.length > 0 ? user.interests.slice(0, 3) : []).map((interest, index) => (
                   <View key={index} style={styles.interestTag}>
                     <Text style={styles.interestText}>{interest}</Text>
                   </View>
                 ))}
+                {(!user.interests || user.interests.length === 0) && (
+                  <Text style={styles.noInterestsText}>No interests listed</Text>
+                )}
               </View>
             </View>
           </View>
@@ -246,6 +249,11 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#FFFFFF',
     fontWeight: '500',
+  },
+  noInterestsText: {
+    fontSize: 12,
+    color: '#888888',
+    fontStyle: 'italic',
   },
   actionsContainer: {
     position: 'absolute',
