@@ -144,9 +144,6 @@ export const InterestMeter: React.FC<InterestMeterProps> = ({ score, style }) =>
 
         {score && (
           <View style={styles.metaContainer}>
-            <Text style={styles.confidence}>
-              Accuracy: {getConfidenceIndicator(score.confidence)}
-            </Text>
             <Text style={styles.timestamp}>
               💕 Updated: {new Date(score.timestamp).toLocaleTimeString()}
             </Text>

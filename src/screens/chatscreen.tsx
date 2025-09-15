@@ -454,19 +454,7 @@ export const ChatScreen: React.FC = () => {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.userInfo}>
-          <Text style={styles.userName}>{otherUser?.displayName || 'Chat Partner'}</Text>
-          {otherUser?.isOnline && (
-            <View style={styles.onlineStatus}>
-              <Text style={styles.onlineText}>Online 🟢</Text>
-            </View>
-          )}
-        </View>
-      </View>
-
-      {/* Centered Interest Meter */}
+      {/* Interest Meter at the absolute top */}
       <View style={styles.meterSection}>
         <InterestMeter
           score={interestScore || {
@@ -483,6 +471,18 @@ export const ChatScreen: React.FC = () => {
             {` • ${(behaviorState.confidence * 100).toFixed(0)}%`}
           </Text>
         )}
+      </View>
+
+      {/* Header under the meter (without 'Chat Partner' literal) */}
+      <View style={styles.header}>
+        <View style={styles.userInfo}>
+          <Text style={styles.userName}>{otherUser?.displayName || ''}</Text>
+          {otherUser?.isOnline && (
+            <View style={styles.onlineStatus}>
+              <Text style={styles.onlineText}>Online 🟢</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       {/* Chemistry trend */}
@@ -511,7 +511,7 @@ export const ChatScreen: React.FC = () => {
         {/* Messages with telemetry tracking */}
         <TelemetryScrollView
           style={styles.messagesList}
-          contentContainerStyle={styles.messagesContent}
+          contentContainerStyle={[styles.messagesContent]}
           componentId="chat-messages-scroll"
           sessionIdOverride={telemetrySessionId || undefined}
           onScroll={handleScroll}
@@ -530,49 +530,49 @@ export const ChatScreen: React.FC = () => {
 
         {/* Input area with telemetry tracking */}
         <View style={styles.inputContainer}>
-        <View style={styles.inputRow}>
-          <TelemetryTextInput
-            style={styles.textInput}
-            value={newMessage}
-            onChangeText={handleTyping}
-            placeholder="Share your romantic thoughts... �"
-            placeholderTextColor="#666"
-            componentId="chat-message-input"
-            sessionIdOverride={telemetrySessionId || undefined}
-            multiline
-            maxLength={500}
-          />
-          <TelemetryTouchableOpacity
-            style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
-            onPress={sendMessage}
-            componentId="chat-send-button"
-            disabled={!newMessage.trim()}
-          >
-            <Text style={styles.sendButtonText}>💖</Text>
-          </TelemetryTouchableOpacity>
+          <View style={styles.inputRow}>
+            <TelemetryTextInput
+              style={styles.textInput}
+              value={newMessage}
+              onChangeText={handleTyping}
+              placeholder="Share your romantic thoughts... �"
+              placeholderTextColor="#666"
+              componentId="chat-message-input"
+              sessionIdOverride={telemetrySessionId || undefined}
+              multiline
+              maxLength={500}
+            />
+            <TelemetryTouchableOpacity
+              style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
+              onPress={sendMessage}
+              componentId="chat-send-button"
+              disabled={!newMessage.trim()}
+            >
+              <Text style={styles.sendButtonText}>💖</Text>
+            </TelemetryTouchableOpacity>
+          </View>
+          {(
+            <Animated.View 
+              style={[
+                styles.typingIndicator,
+                {
+                  opacity: fadeAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, 1],
+                  })
+                }
+              ]}
+            >
+              <Text style={styles.typingText}>
+                💭 Writing for {isTyping ? ((Date.now() - typingStartTime) / 1000).toFixed(1) : '0.0'}s • 
+                ⌨️ {keyPressCount} keystrokes • ✏️ {backspaceCount} edits
+              </Text>
+              <Text style={styles.typingText}>
+                Scroll Velocity: {scrollAnalytics.velocity.toFixed(2)} | Hesitations: {scrollAnalytics.hesitations}
+              </Text>
+            </Animated.View>
+          )}
         </View>
-        {(
-          <Animated.View 
-            style={[
-              styles.typingIndicator,
-              {
-                opacity: fadeAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [0, 1],
-                })
-              }
-            ]}
-          >
-            <Text style={styles.typingText}>
-              💭 Writing for {isTyping ? ((Date.now() - typingStartTime) / 1000).toFixed(1) : '0.0'}s • 
-              ⌨️ {keyPressCount} keystrokes • ✏️ {backspaceCount} edits
-            </Text>
-            <Text style={styles.typingText}>
-              Scroll Velocity: {scrollAnalytics.velocity.toFixed(2)} | Hesitations: {scrollAnalytics.hesitations}
-            </Text>
-          </Animated.View>
-        )}
-      </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -595,8 +595,8 @@ const styles = StyleSheet.create({
   meterSection: {
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     backgroundColor: 'rgba(0, 0, 0, 0.97)',
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(255, 20, 147, 0.2)',
@@ -612,9 +612,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   interestMeter: {
-  width: '90%',
-  maxWidth: 320,
-  height: 60,
+  width: '92%',
+  maxWidth: 360,
+  height: 56,
+  marginTop: 0,
+  marginBottom: 0,
   },
   stateBadge: {
     marginTop: 8,
@@ -626,7 +628,7 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: 'bold',
     color: '#FFFFFF',
-    marginBottom: 4,
+    marginBottom: 0,
   },
   onlineStatus: {
     flexDirection: 'row',
@@ -664,6 +666,7 @@ const styles = StyleSheet.create({
   },
   messagesContent: {
     padding: 16,
+    paddingTop: 16,
   },
   messageContainer: {
     marginBottom: 16,
