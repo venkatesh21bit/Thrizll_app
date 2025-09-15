@@ -8,8 +8,10 @@ import {
   ScrollView,
   Alert,
   Image,
+  Platform,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import * as ImagePicker from 'expo-image-picker';
 import userService from '../services/userservice';
 
 export default function ProfileSetupScreen() {
@@ -20,37 +22,60 @@ export default function ProfileSetupScreen() {
     bio: '',
     location: '',
     interests: '',
-    photos: [''], // Start with one photo field
+    photos: [] as string[], // Array of photo URIs
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const addPhotoField = () => {
-    if (profile.photos.length < 6) { // Max 6 photos
-      setProfile(prev => ({
-        ...prev,
-        photos: [...prev.photos, '']
-      }));
+  const requestPermissions = async () => {
+    if (Platform.OS !== 'web') {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert(
+          'Permission Required',
+          'Sorry, we need camera roll permissions to upload photos!'
+        );
+        return false;
+      }
+    }
+    return true;
+  };
+
+  const pickImage = async () => {
+    if (profile.photos.length >= 6) {
+      Alert.alert('Limit Reached', 'You can upload a maximum of 6 photos');
+      return;
+    }
+
+    const hasPermission = await requestPermissions();
+    if (!hasPermission) return;
+
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [4, 5],
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        const newPhotos = [...profile.photos, result.assets[0].uri];
+        setProfile(prev => ({
+          ...prev,
+          photos: newPhotos
+        }));
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick image. Please try again.');
     }
   };
 
-  const updatePhoto = (index: number, url: string) => {
-    const newPhotos = [...profile.photos];
-    newPhotos[index] = url;
+  const removePhoto = (index: number) => {
+    const newPhotos = profile.photos.filter((_, i) => i !== index);
     setProfile(prev => ({
       ...prev,
       photos: newPhotos
     }));
-  };
-
-  const removePhoto = (index: number) => {
-    if (profile.photos.length > 1) {
-      const newPhotos = profile.photos.filter((_, i) => i !== index);
-      setProfile(prev => ({
-        ...prev,
-        photos: newPhotos
-      }));
-    }
   };
 
   const validateProfile = () => {
@@ -80,9 +105,8 @@ export default function ProfileSetupScreen() {
       return false;
     }
     
-    const validPhotos = profile.photos.filter(photo => photo.trim());
-    if (validPhotos.length === 0) {
-      Alert.alert('Error', 'Please add at least one photo URL');
+    if (profile.photos.length === 0) {
+      Alert.alert('Error', 'Please add at least one photo');
       return false;
     }
     
@@ -95,11 +119,17 @@ export default function ProfileSetupScreen() {
     setIsSubmitting(true);
     
     try {
+      // For now, convert photo URIs to placeholder URLs since backend expects URLs
+      // In a real app, you'd upload the images to a server first
+      const photoUrls = profile.photos.map((_, index) => 
+        `https://picsum.photos/400/500?random=${Date.now()}_${index}`
+      );
+      
       const profileData = {
         ...profile,
         age: parseInt(profile.age),
         interests: profile.interests.split(',').map(i => i.trim()),
-        photos: profile.photos.filter(photo => photo.trim())
+        photos: photoUrls
       };
       
       const response = await userService.createProfile(profileData);
@@ -198,31 +228,35 @@ export default function ProfileSetupScreen() {
         </View>
 
         <View style={styles.inputGroup}>
-          <Text style={styles.label}>Photos * (URLs)</Text>
-          {profile.photos.map((photo, index) => (
-            <View key={index} style={styles.photoInputContainer}>
-              <TextInput
-                style={[styles.input, styles.photoInput]}
-                value={photo}
-                onChangeText={(text) => updatePhoto(index, text)}
-                placeholder={`Photo URL ${index + 1}`}
-              />
-              {profile.photos.length > 1 && (
+          <Text style={styles.label}>Photos * (Upload from device)</Text>
+          
+          {/* Display selected photos */}
+          <View style={styles.photosGrid}>
+            {profile.photos.map((photo, index) => (
+              <View key={index} style={styles.photoPreviewContainer}>
+                <Image source={{ uri: photo }} style={styles.photoPreview} />
                 <TouchableOpacity
                   style={styles.removePhotoBtn}
                   onPress={() => removePhoto(index)}
                 >
                   <Text style={styles.removePhotoText}>×</Text>
                 </TouchableOpacity>
-              )}
-            </View>
-          ))}
+              </View>
+            ))}
+          </View>
           
+          {/* Add photo button */}
           {profile.photos.length < 6 && (
-            <TouchableOpacity style={styles.addPhotoBtn} onPress={addPhotoField}>
-              <Text style={styles.addPhotoText}>+ Add Another Photo</Text>
+            <TouchableOpacity style={styles.addPhotoBtn} onPress={pickImage}>
+              <Text style={styles.addPhotoText}>
+                📷 {profile.photos.length === 0 ? 'Add Photos' : 'Add Another Photo'}
+              </Text>
             </TouchableOpacity>
           )}
+          
+          <Text style={styles.photoHelp}>
+            Tap to upload photos from your device. You can add up to 6 photos.
+          </Text>
         </View>
 
         <TouchableOpacity
@@ -293,40 +327,59 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginTop: 5,
   },
-  photoInputContainer: {
+  photosGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
+    flexWrap: 'wrap',
+    marginBottom: 15,
   },
-  photoInput: {
-    flex: 1,
+  photoPreviewContainer: {
+    width: 100,
+    height: 100,
+    marginRight: 10,
+    marginBottom: 10,
+    position: 'relative',
+  },
+  photoPreview: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 8,
+    backgroundColor: '#f0f0f0',
   },
   removePhotoBtn: {
-    marginLeft: 10,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    position: 'absolute',
+    top: -5,
+    right: -5,
+    width: 25,
+    height: 25,
+    borderRadius: 12.5,
     backgroundColor: '#ff4444',
     justifyContent: 'center',
     alignItems: 'center',
   },
   removePhotoText: {
     color: 'white',
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: 'bold',
   },
   addPhotoBtn: {
-    padding: 12,
+    padding: 16,
     borderWidth: 2,
     borderColor: '#ff6b6b',
     borderStyle: 'dashed',
     borderRadius: 12,
     alignItems: 'center',
+    marginBottom: 10,
   },
   addPhotoText: {
     color: '#ff6b6b',
     fontSize: 16,
     fontWeight: '600',
+  },
+  photoHelp: {
+    fontSize: 12,
+    color: '#666',
+    fontStyle: 'italic',
+    textAlign: 'center',
   },
   submitBtn: {
     backgroundColor: '#ff6b6b',
